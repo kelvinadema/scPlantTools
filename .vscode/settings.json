@@ -1,0 +1,20 @@
+{
+  "//": "Schema hints for the config YAMLs. Needs the Red Hat YAML extension (redhat.vscode-yaml). Each config also carries its own '# yaml-language-server: $schema=...' modeline, which travels with the file and works in any editor that speaks the protocol; this block is the fallback and the place to add a glob for new configs. Regenerate the schemas with: python -m mapping_scripts.validate --emit-schemas",
+  "yaml.schemas": {
+    "./configs/schemas/sample_sheet.schema.json": [
+      "configs/sample_metadata.yaml",
+      "configs/sample_subset.yaml",
+      "configs/MarcantiaSample.yaml"
+    ],
+    "./configs/schemas/pipeline_config.schema.json": "configs/pipeline_config.yaml",
+    "./configs/schemas/mapping_config.schema.json": "configs/mapping_config.yaml",
+    "./configs/schemas/index_config.schema.json": "configs/index_config.yaml",
+    "./configs/schemas/technology_config.schema.json": "configs/technology_config.yaml",
+    "./configs/schemas/integration_config.schema.json": "configs/integration_config.yaml",
+    "./configs/schemas/qc_config.schema.json": "configs/qc_config.yaml",
+    "./configs/schemas/filter_config.schema.json": "configs/filter_config.yaml"
+  },
+  "yaml.validate": true,
+  "yaml.hover": true,
+  "yaml.completion": true
+}

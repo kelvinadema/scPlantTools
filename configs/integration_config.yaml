@@ -1,0 +1,78 @@
+# yaml-language-server: $schema=./schemas/integration_config.schema.json
+
+# Applied to every target below; a target that states the key wins.
+defaults:
+  tune: True
+  # Train long enough for KL warmup to complete and the latent to settle, on
+  # every scVI target and on both the tuning trials and the final fit. scvi's
+  # default max_epochs is a cell-count heuristic (min(round(20000/n_obs*400),
+  # 400)) that drops below the 400-epoch KL warmup default above ~20k cells, so
+  # a large target would otherwise stop with kl_weight still ramping and the
+  # latent under-regularized (scvi-tools #507: keep max_epochs > n_epochs_kl_warmup).
+  # 80-epoch warmup completes at 40% of training with 120 epochs left to settle.
+  # For a target much larger than this, prefer n_steps_kl_warmup (iteration-based)
+  # in plan_kwargs instead. scArches targets also honour these on the query
+  # fine-tune (refmapping merges the canonical weight_decay=0.0 into plan_kwargs).
+  max_epochs: 200
+  plan_kwargs:
+    n_epochs_kl_warmup: 80
+  check_val_every_n_epoch: 1
+
+# NOT set here, but settable per target: `search_space:`. The autotune space is
+# config-driven as of 2026-08-04, with a built-in default PER MODEL CLASS in
+# integration/integrate.py::_SEARCH_SPACE_DEFAULTS (SCVI /
+# JointEmbeddingSCVI / DRVI). A target states only the keys it changes; they are
+# merged over that default per key. Values:
+#
+#   n_latent: [32, 64, 128]              tune.choice over the list
+#   dispersion: ['gene-cell']            1-element list == pin, do not search
+#   plan_lr: {loguniform: [1.0e-4, 1.0e-2]}   any ray sampler, single-key mapping
+#   n_split_latent: null                 drop the key; scvi's own default, unnamed
+#
+# Only read when `tune: True` -- with tuning off the parameters come from
+# `model_params:` instead. The defaults were narrowed on 2026-08-04 against the
+# 30 tuned configs already in results/integration/scvi_tune_registry.json; the
+# reasoning (unanimous values pinned, edge-pinned values EXTENDED rather than
+# fixed) is in the block comment above _SEARCH_SPACE_DEFAULTS. Deliberately left
+# out of this `defaults:` block: a search space belongs to a model class, not to
+# every target in the file, and stating one here would apply a DRVI-shaped space
+# to the JointEmbeddingSCVI targets above.
+
+# ---------------------------------------------------------------------------
+# THIS FILE IS THE BASE. It holds what the pipeline itself owns: the cohort
+# groups, the `defaults:` block, the site paths, and the reference integrations
+# other stages read.
+#
+# A thesis chapter's own targets are NOT here. They live in the notebooks repo
+# beside the analysis that reads them, in a file that `extends:` this one:
+#
+#   notebooks/03-sc-vs-sn/configs/integration.yaml     Chapter 3
+#   notebooks/05-Mt-resource/configs/integration.yaml  Chapter 5
+#
+# Run one of those with --icfg; the merged config is indistinguishable from a
+# standalone file. A group or target name defined in both files is an ERROR,
+# not an override -- see shared/targets.py::load_integration_config.
+# ---------------------------------------------------------------------------
+
+# Reusable sample lists. 
+groups:
+  tip: ['p1', 'p2', 'p3', 'rep1', 'rep2', 'rep3', 'rep4', 'BDTip2mm', 'BDTip10mm']
+  induced_10x: ['pMock', 'pNOD', 'pBAP', 'B24H', 'B48H', 'B72H', 'B96H']
+  induced_bd: ['BDMock', 'BDNod', 'SMu005', 'SMu006', 'SMu007', 'SMu008', 'SMu009', 'SMu010', 'SMu011', 'SMu012']
+  induced_all: ['induced_10x', 'induced_bd']
+  tip_induced_all: ['tip', 'induced_all']
+
+IntegrateConfigs:
+# TIP reference dataset
+  MtTip:
+    Samples: ['tip']
+    covariates: ['mitochondrial_fraction_corrected_counts', 'chloroplast_fraction_corrected_counts', 'ribosomal_rna_fraction_corrected_counts']
+    method: 'scVI'
+    do_hvg: False
+    tune: True
+    model_class: 'JointEmbeddingSCVI'
+    n_trials: 200
+    artifact_key: 'filtered_manual_h5ad'
+
+input_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/mapping
+output_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration

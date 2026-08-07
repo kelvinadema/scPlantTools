@@ -1,0 +1,485 @@
+# yaml-language-server: $schema=./schemas/sample_sheet.schema.json
+#
+# ---------------------------------------------------------------------------
+# The design columns: tech, prep, treatment, time_h
+#
+# These describe the CELL, not the run. `integration/orchestrator.py` stamps
+# each onto `.obs` at concatenation (never overwriting a column the mapping
+# artifact already carries), so what is written here is what a model or a plot
+# can group by later. Which of them are safe to *correct* on is a separate
+# question -- see docs/decisions/batch-keys-and-confounds.md.
+#
+#   tech       Platform: 10xv3 | bd_rhapsody. Crossed with condition wherever
+#              both platforms ran the same timepoints.
+#
+#   prep       Handling variant, set only where one exists. Currently the five
+#              BD susceptible-zone NF/mock samples, where the 1h-post-
+#              protoplasting variant is crossed with NF-vs-mock. Absent
+#              elsewhere, which is correct: a cohort with one handling variant
+#              has nothing to distinguish.
+#
+#   treatment  mock | none | NF | BAP | S_meliloti. `none` means untreated;
+#              `mock` is the treated cohort's control.
+#
+#   time_h     HOURS SINCE TREATMENT APPLIED, as a number. Only interpretable
+#              together with `treatment`: NF/BAP at 3 hpt and S. meliloti at
+#              24 hpi share one numeric axis while being different timelines,
+#              so never order cells on time_h ACROSS treatments.
+#              * Untreated samples (`treatment: none`) carry NO time_h -- there
+#                is no treatment to be hours after.
+#              * Mock is `time_h: 0` by convention. Per the staggered-
+#                inoculation design it was harvested alongside every timepoint,
+#                so it is a control for all of them, not a t=0 baseline.
+#
+# `batch` is a free-form string naming the run. On this cohort it is one-to-one
+# with condition, so it is NOT a safe correction target -- read the decisions
+# doc above before naming it as a batch_key.
+# ---------------------------------------------------------------------------
+#
+# Applied to every sample below; any sample may override any of these
+# simply by stating the key itself.
+defaults:
+  fallback: ratio_global
+  mapper: alevin
+  mapping_config: default
+  qc_filter: default
+  qc_metrics: default
+  sample_type: protoplast
+  tech: 10xv3
+
+samples:
+  1_S_zone:
+    sample_type: nuclei
+    batch: 10x_nuclei_untreated_sz
+    treatment: mock
+    time_h: 0
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/1_S_zone/1_S_zone_S1_L001_R1_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/1_S_zone/1_S_zone_S1_L002_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/1_S_zone/1_S_zone_S1_L001_R2_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/1_S_zone/1_S_zone_S1_L002_R2_001.fastq.gz
+
+  2_tip:
+    sample_type: nuclei
+    batch: 10x_nuclei_untreated_tip
+    treatment: none
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/2_tip/2_tip_S2_L001_R1_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/2_tip/2_tip_S2_L002_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/2_tip/2_tip_S2_L001_R2_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/2_tip/2_tip_S2_L002_R2_001.fastq.gz
+
+  3_nod:
+    sample_type: nuclei
+    batch: 10x_nuclei_treated_NF3H_tip
+    treatment: NF
+    time_h: 3
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/3_nod/3_nod_S3_L001_R1_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/3_nod/3_nod_S3_L002_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/3_nod/3_nod_S3_L001_R2_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/3_nod/3_nod_S3_L002_R2_001.fastq.gz
+
+  4_BAP:
+    sample_type: nuclei
+    batch: 10x_nuclei_treated_BAP3H_tip
+    treatment: BAP
+    time_h: 3
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/4_BAP/4_BAP_S4_L001_R1_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/4_BAP/4_BAP_S4_L002_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/4_BAP/4_BAP_S4_L001_R2_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/4_BAP/4_BAP_S4_L002_R2_001.fastq.gz
+
+  5_s_zone_exp:
+    sample_type: nuclei
+    batch: 10x_nuclei_exp_untreated_sz
+    treatment: mock
+    time_h: 0
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/5_s_zone_exp/5_S_zone_exp_S5_L001_R1_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/5_s_zone_exp/5_S_zone_exp_S5_L002_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/5_s_zone_exp/5_S_zone_exp_S5_L001_R2_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/5_s_zone_exp/5_S_zone_exp_S5_L002_R2_001.fastq.gz
+
+  nMOCK:
+    sample_type: nuclei
+    batch: 10x_nuclei_facs_untreated_sz
+    treatment: mock
+    time_h: 0
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/MOCK/N_Mock-SCI7T061-SCI5T061_H3W5WDSX5_S2_L003_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/MOCK/N_Mock-SCI7T061-SCI5T061_H3W5WDSX5_S2_L003_R2_001.fastq.gz
+
+  nNOD:
+    sample_type: nuclei
+    batch: 10x_nuclei_facs_treated_NF3H_sz
+    treatment: NF
+    time_h: 3
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/NOD/N_Nod-SCI7T049-SCI5T049_H32TYDSX5_S1_L002_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/NOD/N_Nod-SCI7T049-SCI5T049_H32TYDSX5_S1_L002_R2_001.fastq.gz
+
+  nBAP:
+    sample_type: nuclei
+    batch: 10x_nuclei_facs_treated_BAP3H_sz
+    treatment: BAP
+    time_h: 3
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/BAP/N_BAP-SCI7T073-SCI5T073_H3W5WDSX5_S1_L003_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/BAP/N_BAP-SCI7T073-SCI5T073_H3W5WDSX5_S1_L003_R2_001.fastq.gz
+
+  N_DTT_12:
+    sample_type: nuclei
+    batch: 10x_nuclei_DTT_12_tip
+    treatment: none
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/N_DTT_12/N_DTT_12-SCI7T002-SCI5T002_HKKN3DSX5_S21_L002_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/N_DTT_12/N_DTT_12-SCI7T002-SCI5T002_HKKN3DSX5_S21_L002_R2_001.fastq.gz
+
+  N_DTT_50:
+    sample_type: nuclei
+    batch: 10x_nuclei_DTT_50_tip
+    treatment: none
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/N_DTT_50/N_DTT_50-SCI7T003-SCI5T003_HKKN3DSX5_S22_L002_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/N_DTT_50/N_DTT_50-SCI7T003-SCI5T003_HKKN3DSX5_S22_L002_R2_001.fastq.gz
+
+  N0h:
+    sample_type: nuclei
+    batch: 10x_nuclei_treated_mock_sz
+    treatment: mock
+    time_h: 0
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/N0h/N0h-SCI7T001-SCI5T001_HKFCHDSX3_S10_L003_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/N0h/N0h-SCI7T001-SCI5T001_HKFCHDSX3_S10_L003_R2_001.fastq.gz
+
+  N24h:
+    sample_type: nuclei
+    batch: 10x_nuclei_treated_smeli24_sz
+    treatment: S_meliloti
+    time_h: 24
+    mapping_config: induced
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/N24/N24h-SCI7T013-SCI5T013_HKFN5DSX3_S1_L003_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/N24/N24h-SCI7T013-SCI5T013_HKFN5DSX3_S1_L003_R2_001.fastq.gz
+
+  N48h:
+    sample_type: nuclei
+    mapping_config: induced
+    batch: 10x_nuclei_treated_smeli48_sz
+    treatment: S_meliloti
+    time_h: 48
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/N48/N48h-SCI7T025-SCI5T025_HKG3GDSX3_S27_L003_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/N48/N48h-SCI7T025-SCI5T025_HKG3GDSX3_S27_L003_R2_001.fastq.gz
+
+  N72h:
+    sample_type: nuclei
+    mapping_config: induced
+    batch: 10x_nuclei_treated_smeli72_sz
+    treatment: S_meliloti
+    time_h: 72
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/N72/N72h-SCI7T037-SCI5T037_HKG3GDSX3_S28_L003_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/N72/N72h-SCI7T037-SCI5T037_HKG3GDSX3_S28_L003_R2_001.fastq.gz
+
+  SMu005:
+    tech: bd_rhapsody
+    prep: 1h_2h_mix
+    batch: BD_protoplast_treated_NF3H_1Hprot_calcein_sz
+    treatment: NF
+    time_h: 3
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu005/SMu005_S7_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu005/SMu005_S7_R2_001.fastq.gz
+
+  SMu006:
+    tech: bd_rhapsody
+    prep: 1h_2h_mix
+    batch: BD_protoplast_treated_NF3H_1Hprot_fda_sz
+    treatment: NF
+    time_h: 3
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu006/SMu006_S7_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu006/SMu006_S7_R2_001.fastq.gz
+
+  SMu007:
+    tech: bd_rhapsody
+    prep: 1h_2h_mix
+    batch: BD_protoplast_treated_smeli12_sz
+    treatment: S_meliloti
+    time_h: 12
+    mapping_config: induced
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu007/E150030109_L01_9001_R1.fq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu007/E150030296_L01_9001_R1.fq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu007/E150030109_L01_9001_R2.fq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu007/E150030296_L01_9001_R2.fq.gz
+
+  SMu008:
+    tech: bd_rhapsody
+    prep: 1h_2h_mix
+    batch: BD_protoplast_treated_mock_1Hprot_sz
+    treatment: mock
+    time_h: 0
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu008/E150030109_L01_9002_R1.fq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu008/E150030296_L01_9002_R1.fq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu008/E150030109_L01_9002_R2.fq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu008/E150030296_L01_9002_R2.fq.gz
+
+  SMu009:
+    tech: bd_rhapsody
+    prep: 1h_2h_mix
+    batch: BD_protoplast_treated_smeli24_sz
+    treatment: S_meliloti
+    time_h: 24
+    mapping_config: induced
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu009/E150030109_L01_9003_R1.fq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu009/E150030296_L01_9003_R1.fq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu009/E150030109_L01_9003_R2.fq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu009/E150030296_L01_9003_R2.fq.gz
+
+  SMu010:
+    tech: bd_rhapsody
+    prep: 1h_2h_mix
+    batch: BD_protoplast_treated_smeli48_sz
+    treatment: S_meliloti
+    time_h: 48
+    mapping_config: induced
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu010/E150030181_L01_9004_R1.fq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu010/E150030307_L01_9004_R1.fq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu010/E150030181_L01_9004_R2.fq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu010/E150030307_L01_9004_R2.fq.gz
+
+  SMu011:
+    tech: bd_rhapsody
+    prep: 1h_2h_mix
+    batch: BD_protoplast_treated_smeli72_sz
+    treatment: S_meliloti
+    time_h: 72
+    mapping_config: induced
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu011/E150030181_L01_9005_R1.fq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu011/E150030307_L01_9005_R1.fq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu011/E150030181_L01_9005_R2.fq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu011/E150030307_L01_9005_R2.fq.gz
+
+  SMu012:
+    tech: bd_rhapsody
+    prep: 1h_2h_mix
+    batch: BD_protoplast_treated_smeli96_sz
+    treatment: S_meliloti
+    time_h: 96
+    mapping_config: induced
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu012/E150030181_L01_9006_R1.fq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu012/E150030307_L01_9006_R1.fq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu012/E150030181_L01_9006_R2.fq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/SMu012/E150030307_L01_9006_R2.fq.gz
+
+  BDNod:
+    tech: bd_rhapsody
+    prep: 2h_only
+    batch: BD_protoplast_treated_NF3H_sz
+    treatment: NF
+    time_h: 3
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/BDNod/Mt_S_Nod_1.fq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/BDNod/Mt_S_Nod_2.fq.gz
+
+  BDMock:
+    tech: bd_rhapsody
+    prep: 2h_only
+    batch: BD_protoplast_treated_mock_sz
+    treatment: mock
+    time_h: 0
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/BDMock/Mt_S_Mock_1.fq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/BDMock/Mt_S_Mock_2.fq.gz
+
+  BDTip2mm:
+    tech: bd_rhapsody
+    prep: 2h_only
+    batch: BD_protoplast_untreated_tip_2mm
+    treatment: none
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/BDTip2mm/Mt_2mm_tip_1.fq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/BDTip2mm/Mt_2mm_tip_2.fq.gz
+
+  BDTip10mm:
+    tech: bd_rhapsody
+    prep: 2h_only
+    batch: BD_protoplast_untreated_tip_10mm
+    treatment: none
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/BDTip10mm/BD_10mm_tip_S1_L001_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/BD/BDTip10mm/BD_10mm_tip_S1_L001_R2_001.fastq.gz
+
+  rep1:
+    prep: 2h_only
+    batch: 10x_protoplast_untreated_tip_10mm_batch1
+    treatment: none
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/rep1/sc_proto_1_S2_L002_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/rep1/sc_proto_1_S2_L002_R2_001.fastq.gz
+
+  rep2:
+    prep: 2h_only
+    batch: 10x_protoplast_untreated_tip_10mm_batch2
+    treatment: none
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/rep2/sc_proto_2_S3_L002_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/rep2/sc_proto_2_S3_L002_R2_001.fastq.gz
+
+  rep3:
+    prep: 2h_only
+    batch: 10x_protoplast_untreated_tip_10mm_batch3
+    treatment: none
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/rep3/sc_proto_3_S4_L002_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/rep3/sc_proto_3_S4_L002_R2_001.fastq.gz
+
+  rep4:
+    prep: 2h_only
+    batch: 10x_protoplast_untreated_tip_10mm_batch4
+    treatment: none
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/rep4/sc_proto_4_S5_L002_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/rep4/sc_proto_4_S5_L002_R2_001.fastq.gz
+
+  p1:
+    prep: 2h_only
+    batch: 10x_protoplast_untreated_tip_2mm_batch1
+    treatment: none
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/P1/P_tip1-SCI7T004-SCI5T004_HTVM2DSX5_S58_L004_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/P1/P_tip1-SCI7T004-SCI5T004_HTVM2DSX5_S58_L004_R2_001.fastq.gz
+
+  p2:
+    prep: 2h_only
+    batch: 10x_protoplast_untreated_tip_2mm_batch2
+    treatment: none
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/P2/P_tip2-SCI7T005-SCI5T005_HTVM2DSX5_S59_L004_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/P2/P_tip2-SCI7T005-SCI5T005_HTVM2DSX5_S59_L004_R2_001.fastq.gz
+
+  p3:
+    prep: 2h_only
+    batch: 10x_protoplast_untreated_tip_2mm_batch3
+    treatment: none
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/P3/P_tip3-SCI7T006-SCI5T006_HTVMCDSX5_S6_L002_R1_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/P3/P_tip3-SCI7T006-SCI5T006_HTWVJDSX5_S11_L002_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/P3/P_tip3-SCI7T006-SCI5T006_HTVMCDSX5_S6_L002_R2_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/P3/P_tip3-SCI7T006-SCI5T006_HTWVJDSX5_S11_L002_R2_001.fastq.gz
+
+  pMock:
+    prep: 2h_only
+    batch: 10x_protoplast_treated_mock_sz
+    treatment: mock
+    time_h: 0
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/Mock/P-MOCK_S7_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/Mock/P-MOCK_S7_R2_001.fastq.gz
+
+  pNOD:
+    prep: 2h_only
+    batch: 10x_protoplast_treated_NF3H_sz
+    treatment: NF
+    time_h: 3
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/Nod/P-NF_S5_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/Nod/P-NF_S5_R2_001.fastq.gz
+
+  pBAP:
+    prep: 2h_only
+    batch: 10x_protoplast_treated_BAP3H_sz
+    treatment: BAP
+    time_h: 3
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/Bap/P-BAP_S6_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/Bap/P-BAP_S6_R2_001.fastq.gz
+
+  B24H:
+    mapping_config: induced
+    prep: 2h_only
+    batch: 10x_protoplast_treated_smeli24_sz
+    treatment: S_meliloti
+    time_h: 24
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/B24H/P_24h_S1_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/B24H/P_24h_S1_R2_001.fastq.gz
+
+  B48H:
+    mapping_config: induced
+    prep: 2h_only
+    batch: 10x_protoplast_treated_smeli48_sz
+    treatment: S_meliloti
+    time_h: 48
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/B48H/P_48h_S2_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/B48H/P_48h_S2_R2_001.fastq.gz
+
+  B72H:
+    mapping_config: induced
+    prep: 2h_only
+    batch: 10x_protoplast_treated_smeli72_sz
+    treatment: S_meliloti
+    time_h: 72
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/B72H/P_72h_S3_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/B72H/P_72h_S3_R2_001.fastq.gz
+
+  B96H:
+    mapping_config: induced
+    prep: 2h_only
+    batch: 10x_protoplast_treated_smeli96_sz
+    treatment: S_meliloti
+    time_h: 96
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/B96H/P_96h_S4_R1_001.fastq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Protoplast/10x/B96H/P_96h_S4_R2_001.fastq.gz

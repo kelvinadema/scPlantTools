@@ -1,0 +1,169 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Sample sheet",
+  "type": "object",
+  "properties": {
+    "defaults": {
+      "type": "object",
+      "description": "Applied to every sample below. Exactly equivalent to writing each key on every sample entry; a sample that states the key wins.",
+      "properties": {
+        "mapper": {
+          "type": "string",
+          "description": "Mapper to use. Only \"alevin\" is implemented end-to-end; \"kb\" and \"starsolo\" are gated at startup.",
+          "enum": [
+            "alevin",
+            "kb",
+            "starsolo"
+          ]
+        },
+        "mapping_config": {
+          "type": "string",
+          "description": "Profile under mappers.<mapper> in mapping_config.yaml. Selects the index; this is how a second species is wired in."
+        },
+        "index_ref": {
+          "type": "string",
+          "description": "Optional. Names an entry in index_config.yaml directly, bypassing the mapper profile. For one-offs that do not warrant their own profile."
+        },
+        "tech": {
+          "type": "string",
+          "description": "Chemistry key into technology_config.yaml (e.g. 10xv3, bd_rhapsody)."
+        },
+        "sample_type": {
+          "type": "string",
+          "description": "Drives the ambiguous-read fallback in preprocess.py and sample-type-keyed thresholds in filter_config.yaml.",
+          "enum": [
+            "protoplast",
+            "nuclei"
+          ]
+        },
+        "prep": {
+          "type": "string",
+          "description": "Protoplasting protocol. Two values: \"1h_2h_mix\" (a 1 h + 2 h protoplast mix) and \"2h_only\". Corrected 2026-08-01 -- the old \"1h_post_protoplasting\"/\"standard\" vocabulary was wrong in both directions: it implied SMu005/006/008 differed from the rest of the SMu series (they do not -- ALL EIGHT SMu samples are 1h_2h_mix), and \"standard\" hid that BDMock/BDNod are the minority protocol within BD. Every 10x protoplast sample and both BD tip samples are 2h_only. Legal as a batch_key only where it is CROSSED with condition, which inside BD it now is (mock and NF each appear at both levels) but only because SMu005/006/008 are in `induced_bd` -- with the 7-sample group it was a perfect proxy for rhizobia-vs-control and correcting on it would have deleted the infection axis. Omit where a cohort has only one variant."
+        },
+        "treatment": {
+          "type": "string",
+          "description": "Experimental treatment applied, as a value rather than a substring of `batch`: mock, NF, BAP, S_meliloti, none. Stamped onto .obs so results can be grouped by it. NEVER a batch_key -- correcting on it deletes the effect being measured, and validate.py errors."
+        },
+        "time_h": {
+          "type": "number",
+          "description": "Hours since treatment applied. NF/BAP at 3 hpt and S. meliloti at 12-96 hpi share this numeric axis while being different timelines, so it is interpretable only together with `treatment` -- never order cells on time_h across treatments. Omitted entirely on untreated samples. Mock is 0 by convention; under the staggered-inoculation / common-harvest design it was harvested alongside every timepoint and is a control for all of them, not a t=0 baseline. NEVER a batch_key."
+        },
+        "fallback": {
+          "type": "string",
+          "description": "NOT READ BY ANY CODE PATH. The ambiguous-read fallback chain (per-cell, per-gene, global, sample_type) is hardcoded in preprocess.py and keyed off sample_type. Retained because it is written on every sample; safe to delete."
+        },
+        "qc_filter": {
+          "type": "string",
+          "description": "Profile under QCfilterconfigs in filter_config.yaml."
+        },
+        "qc_metrics": {
+          "type": "string",
+          "description": "Profile under QCconfigs in qc_config.yaml. Defaults to \"default\"."
+        },
+        "batch": {
+          "type": "string",
+          "description": "Batch label carried into integration. Falls back to the sample name."
+        },
+        "fastq1": {
+          "type": "array",
+          "description": "R1 FASTQ paths.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fastq2": {
+          "type": "array",
+          "description": "R2 FASTQ paths; must be the same length as fastq1.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "samples": {
+      "type": "object",
+      "description": "Mapping of sample name to sample entry.",
+      "additionalProperties": {
+        "type": "object",
+        "description": "One sample. Any key omitted here falls back to the sheet-level `defaults:` block.",
+        "properties": {
+          "mapper": {
+            "type": "string",
+            "description": "Mapper to use. Only \"alevin\" is implemented end-to-end; \"kb\" and \"starsolo\" are gated at startup.",
+            "enum": [
+              "alevin",
+              "kb",
+              "starsolo"
+            ]
+          },
+          "mapping_config": {
+            "type": "string",
+            "description": "Profile under mappers.<mapper> in mapping_config.yaml. Selects the index; this is how a second species is wired in."
+          },
+          "index_ref": {
+            "type": "string",
+            "description": "Optional. Names an entry in index_config.yaml directly, bypassing the mapper profile. For one-offs that do not warrant their own profile."
+          },
+          "tech": {
+            "type": "string",
+            "description": "Chemistry key into technology_config.yaml (e.g. 10xv3, bd_rhapsody)."
+          },
+          "sample_type": {
+            "type": "string",
+            "description": "Drives the ambiguous-read fallback in preprocess.py and sample-type-keyed thresholds in filter_config.yaml.",
+            "enum": [
+              "protoplast",
+              "nuclei"
+            ]
+          },
+          "prep": {
+            "type": "string",
+            "description": "Protoplasting protocol. Two values: \"1h_2h_mix\" (a 1 h + 2 h protoplast mix) and \"2h_only\". Corrected 2026-08-01 -- the old \"1h_post_protoplasting\"/\"standard\" vocabulary was wrong in both directions: it implied SMu005/006/008 differed from the rest of the SMu series (they do not -- ALL EIGHT SMu samples are 1h_2h_mix), and \"standard\" hid that BDMock/BDNod are the minority protocol within BD. Every 10x protoplast sample and both BD tip samples are 2h_only. Legal as a batch_key only where it is CROSSED with condition, which inside BD it now is (mock and NF each appear at both levels) but only because SMu005/006/008 are in `induced_bd` -- with the 7-sample group it was a perfect proxy for rhizobia-vs-control and correcting on it would have deleted the infection axis. Omit where a cohort has only one variant."
+          },
+          "treatment": {
+            "type": "string",
+            "description": "Experimental treatment applied, as a value rather than a substring of `batch`: mock, NF, BAP, S_meliloti, none. Stamped onto .obs so results can be grouped by it. NEVER a batch_key -- correcting on it deletes the effect being measured, and validate.py errors."
+          },
+          "time_h": {
+            "type": "number",
+            "description": "Hours since treatment applied. NF/BAP at 3 hpt and S. meliloti at 12-96 hpi share this numeric axis while being different timelines, so it is interpretable only together with `treatment` -- never order cells on time_h across treatments. Omitted entirely on untreated samples. Mock is 0 by convention; under the staggered-inoculation / common-harvest design it was harvested alongside every timepoint and is a control for all of them, not a t=0 baseline. NEVER a batch_key."
+          },
+          "fallback": {
+            "type": "string",
+            "description": "NOT READ BY ANY CODE PATH. The ambiguous-read fallback chain (per-cell, per-gene, global, sample_type) is hardcoded in preprocess.py and keyed off sample_type. Retained because it is written on every sample; safe to delete."
+          },
+          "qc_filter": {
+            "type": "string",
+            "description": "Profile under QCfilterconfigs in filter_config.yaml."
+          },
+          "qc_metrics": {
+            "type": "string",
+            "description": "Profile under QCconfigs in qc_config.yaml. Defaults to \"default\"."
+          },
+          "batch": {
+            "type": "string",
+            "description": "Batch label carried into integration. Falls back to the sample name."
+          },
+          "fastq1": {
+            "type": "array",
+            "description": "R1 FASTQ paths.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fastq2": {
+            "type": "array",
+            "description": "R2 FASTQ paths; must be the same length as fastq1.",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "samples"
+  ],
+  "additionalProperties": false
+}

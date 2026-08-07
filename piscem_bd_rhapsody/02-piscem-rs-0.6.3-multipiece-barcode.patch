@@ -1,0 +1,261 @@
+diff --git a/src/mapping/processors.rs b/src/mapping/processors.rs
+index f7be9d7..23d1c0b 100644
+--- a/src/mapping/processors.rs
++++ b/src/mapping/processors.rs
+@@ -16,6 +16,7 @@ use indicatif::ProgressBar;
+ use paraseq::Record;
+ use paraseq::parallel::{MultiParallelProcessor, PairedParallelProcessor, ParallelProcessor};
+ use seq_geom_parser::normalize::PadBuf;
++use seq_geom_parser::MAX_BC_TOTAL_LEN;
+ use smallvec::SmallVec;
+ use sshash_lib::{Kmer, KmerBits, KmerDictionary};
+ 
+@@ -846,6 +847,12 @@ where
+         };
+         let mut multi_bc_packed: SmallVec<[u64; 2]> = SmallVec::new();
+ 
++        // Scratch for concatenating a barcode level that spans several pieces
++        // (e.g. BD Rhapsody's three-block cell label). Reused across reads so
++        // the split-barcode path stays allocation-free; single-piece barcodes
++        // never touch it and stay zero-copy.
++        let mut bc_assemble_buf: SmallVec<[u8; MAX_BC_TOTAL_LEN]> = SmallVec::new();
++
+         let mut batch_reads: u64 = 0;
+         for (rec1, rec2) in record_pairs {
+             s.local_reads += 1;
+@@ -880,13 +887,17 @@ where
+                     multi_bc_packed.clear();
+                     let mut all_valid = true;
+                     for (i, _desc) in bc_descs.iter().enumerate() {
+-                        let bc_raw = match seqs.barcodes.get(i) {
+-                            Some(Some(bc)) if !bc.is_empty() => *bc,
++                        let bc_seq = match seqs.barcodes.get(i) {
++                            Some(bc) if !bc.is_empty() => bc,
+                             _ => {
+                                 all_valid = false;
+                                 break;
+                             }
+                         };
++                        let bc_raw = match bc_seq.as_contiguous() {
++                            Some(contiguous) => contiguous,
++                            None => bc_seq.assemble_into(&mut bc_assemble_buf),
++                        };
+                         let needs_padding = normalization_plan
+                             .bc_needs_padding
+                             .get(i)
+@@ -910,10 +921,14 @@ where
+                     }
+                     *multi_bc_packed.last().unwrap_or(&0)
+                 } else {
+-                    let bc_raw = match seqs.barcodes.first().copied().flatten() {
++                    let bc_seq = match seqs.barcodes.first() {
+                         Some(bc) if !bc.is_empty() => bc,
+                         _ => continue,
+                     };
++                    let bc_raw = match bc_seq.as_contiguous() {
++                        Some(contiguous) => contiguous,
++                        None => bc_seq.assemble_into(&mut bc_assemble_buf),
++                    };
+                     match normalized_barcode_packed(
+                         bc_raw,
+                         bc_len as usize,
+@@ -944,13 +959,17 @@ where
+                     multi_bc_packed.clear();
+                     let mut all_valid = true;
+                     for (i, _desc) in bc_descs.iter().enumerate() {
+-                        let bc_raw = match seqs.barcodes.get(i) {
+-                            Some(Some(bc)) if !bc.is_empty() => *bc,
++                        let bc_seq = match seqs.barcodes.get(i) {
++                            Some(bc) if !bc.is_empty() => bc,
+                             _ => {
+                                 all_valid = false;
+                                 break;
+                             }
+                         };
++                        let bc_raw = match bc_seq.as_contiguous() {
++                            Some(contiguous) => contiguous,
++                            None => bc_seq.assemble_into(&mut bc_assemble_buf),
++                        };
+                         let n_count = count_ns(bc_raw);
+                         if n_count > 1 {
+                             all_valid = false;
+@@ -984,10 +1003,14 @@ where
+                     }
+                     *multi_bc_packed.last().unwrap_or(&0)
+                 } else {
+-                    let bc_raw = match seqs.barcodes.first().copied().flatten() {
++                    let bc_seq = match seqs.barcodes.first() {
+                         Some(bc) if !bc.is_empty() => bc,
+                         _ => continue,
+                     };
++                    let bc_raw = match bc_seq.as_contiguous() {
++                        Some(contiguous) => contiguous,
++                        None => bc_seq.assemble_into(&mut bc_assemble_buf),
++                    };
+                     let n_count = count_ns(bc_raw);
+                     if n_count > 1 {
+                         continue;
+diff --git a/src/mapping/protocols/custom.rs b/src/mapping/protocols/custom.rs
+index 01b8f3a..fb6bb31 100644
+--- a/src/mapping/protocols/custom.rs
++++ b/src/mapping/protocols/custom.rs
+@@ -197,7 +197,7 @@ mod tests {
+         let r2 = b"BIOLOGICAL_READ";
+ 
+         let seqs = proto.extract(r1, r2);
+-        assert_eq!(seqs.barcodes[0], Some(&r1[..16]));
++        assert_eq!(seqs.barcodes[0].as_contiguous(), Some(&r1[..16]));
+         assert_eq!(seqs.umi, Some(&r1[16..28]));
+         assert_eq!(seqs.reads.len(), 1);
+         assert_eq!(seqs.reads[0], r2.as_slice());
+@@ -213,8 +213,8 @@ mod tests {
+ 
+         let seqs = proto.extract(r1, &r2);
+         assert_eq!(seqs.barcodes.len(), 2);
+-        assert_eq!(seqs.barcodes[0], Some(&r2[68..76])); // sample (b0)
+-        assert_eq!(seqs.barcodes[1], Some(&r1[..16])); // cell (b1)
++        assert_eq!(seqs.barcodes[0].as_contiguous(), Some(&r2[68..76])); // sample (b0)
++        assert_eq!(seqs.barcodes[1].as_contiguous(), Some(&r1[..16])); // cell (b1)
+     }
+ 
+     #[test]
+@@ -238,8 +238,8 @@ mod tests {
+         let r2 = b"BIO_READ";
+ 
+         let seqs = proto.extract(&r1, r2);
+-        assert_eq!(seqs.barcodes[0], Some(sample.as_slice())); // sample
+-        assert_eq!(seqs.barcodes[1], Some(bc.as_slice())); // cell
++        assert_eq!(seqs.barcodes[0].as_contiguous(), Some(sample.as_slice())); // sample
++        assert_eq!(seqs.barcodes[1].as_contiguous(), Some(bc.as_slice())); // cell
+         assert_eq!(seqs.umi, Some(umi.as_slice()));
+     }
+ 
+@@ -258,7 +258,7 @@ mod tests {
+         let r2 = b"TTTTTTTTTTTTtail";
+         let seqs = proto.extract(&r1, r2);
+         assert_eq!(seqs.reads[0], read_prefix.as_slice());
+-        assert_eq!(seqs.barcodes[0], Some(barcode.as_slice()));
++        assert_eq!(seqs.barcodes[0].as_contiguous(), Some(barcode.as_slice()));
+         assert_eq!(seqs.umi, Some(&r2[..12]));
+     }
+ 
+diff --git a/src/mapping/protocols/flex.rs b/src/mapping/protocols/flex.rs
+index bd656dc..b5e7bc9 100644
+--- a/src/mapping/protocols/flex.rs
++++ b/src/mapping/protocols/flex.rs
+@@ -90,7 +90,16 @@ impl Protocol for ChromiumFlexProtocol {
+         };
+         let end = self.sample_bc_offset.min(r2.len());
+         ExtractedSeqs {
+-            barcodes: smallvec![sample_bc, cell_bc],
++            barcodes: smallvec![
++                sample_bc.map_or_else(
++                    seq_geom_parser::BarcodeSeq::default,
++                    seq_geom_parser::BarcodeSeq::from_piece
++                ),
++                cell_bc.map_or_else(
++                    seq_geom_parser::BarcodeSeq::default,
++                    seq_geom_parser::BarcodeSeq::from_piece
++                )
++            ],
+             umi,
+             reads: smallvec![&r2[..end]],
+         }
+@@ -151,8 +160,8 @@ mod tests {
+         let r2 = b"PROBE_SEQUENCE_25_BASES__SSSSSSSS";
+ 
+         let seqs = proto.extract(r1, r2);
+-        assert_eq!(seqs.barcodes[0].unwrap(), b"SSSSSSSS"); // sample BC
+-        assert_eq!(seqs.barcodes[1].unwrap(), b"ACGTACGTACGTACGT"); // cell BC
++        assert_eq!(seqs.barcodes[0].as_contiguous().unwrap(), b"SSSSSSSS"); // sample BC
++        assert_eq!(seqs.barcodes[1].as_contiguous().unwrap(), b"ACGTACGTACGTACGT"); // cell BC
+         assert_eq!(seqs.umi.unwrap(), b"AAAAAAAAAAAA");
+         assert_eq!(seqs.reads.len(), 1);
+         assert_eq!(seqs.reads[0], b"PROBE_SEQUENCE_25_BASES__");
+@@ -187,7 +196,7 @@ mod tests {
+         let r2 = b"SHORT";
+ 
+         let seqs = proto.extract(r1, r2);
+-        assert!(seqs.barcodes[0].is_none()); // sample BC not extractable
+-        assert!(seqs.barcodes[1].is_some()); // cell BC still ok
++        assert!(seqs.barcodes[0].is_empty()); // sample BC not extractable
++        assert!(!seqs.barcodes[1].is_empty()); // cell BC still ok
+     }
+ }
+diff --git a/src/mapping/protocols/mod.rs b/src/mapping/protocols/mod.rs
+index 37c5c95..1b56d4b 100644
+--- a/src/mapping/protocols/mod.rs
++++ b/src/mapping/protocols/mod.rs
+@@ -6,7 +6,7 @@
+ //! variation so protocol-specific logic can be plugged into the generic
+ //! mapping pipeline.
+ 
+-pub use seq_geom_parser::{ExtractedSeqs, NormalizationMeta};
++pub use seq_geom_parser::{BarcodeSeq, ExtractedSeqs, NormalizationMeta};
+ 
+ pub mod bulk;
+ pub mod custom;
+@@ -100,8 +100,13 @@ pub trait Protocol: Send + Sync {
+     }
+ 
+     /// Convenience: get the primary (first) barcode from an extraction result.
+-    fn primary_barcode<'a>(&self, seqs: &ExtractedSeqs<'a>) -> Option<&'a [u8]> {
+-        seqs.barcodes.first().copied().flatten()
++    ///
++    /// A barcode level can be assembled from several disjoint pieces of the
++    /// read, so this hands back the level rather than a single slice. Callers
++    /// that need contiguous bytes use [`BarcodeSeq::as_contiguous`] for the
++    /// single-piece case and [`BarcodeSeq::assemble_into`] otherwise.
++    fn primary_barcode<'a, 'b>(&self, seqs: &'b ExtractedSeqs<'a>) -> Option<&'b BarcodeSeq<'a>> {
++        seqs.barcodes.first().filter(|bc| !bc.is_empty())
+     }
+ }
+ 
+@@ -116,11 +121,11 @@ mod tests {
+     #[test]
+     fn test_extracted_seqs_fields() {
+         let seqs = ExtractedSeqs {
+-            barcodes: smallvec::smallvec![Some(b"ACGT".as_slice())],
++            barcodes: smallvec::smallvec![BarcodeSeq::from_piece(b"ACGT".as_slice())],
+             umi: Some(b"TTTT".as_slice()),
+             reads: smallvec::smallvec![b"BIO".as_slice()],
+         };
+-        assert_eq!(seqs.barcodes[0], Some(b"ACGT".as_slice()));
++        assert_eq!(seqs.barcodes[0].as_contiguous(), Some(b"ACGT".as_slice()));
+         assert_eq!(seqs.umi, Some(b"TTTT".as_slice()));
+         assert_eq!(seqs.reads.len(), 1);
+     }
+diff --git a/src/mapping/protocols/scrna.rs b/src/mapping/protocols/scrna.rs
+index 86d7671..ad73bf7 100644
+--- a/src/mapping/protocols/scrna.rs
++++ b/src/mapping/protocols/scrna.rs
+@@ -120,7 +120,10 @@ impl Protocol for ChromiumProtocol {
+             reads.push(r2);
+         }
+         ExtractedSeqs {
+-            barcodes: smallvec![barcode],
++            barcodes: smallvec![barcode.map_or_else(
++                seq_geom_parser::BarcodeSeq::default,
++                seq_geom_parser::BarcodeSeq::from_piece
++            )],
+             umi,
+             reads,
+         }
+@@ -199,7 +202,7 @@ mod tests {
+         let r2 = b"TGCATGCATGCA";
+ 
+         let seqs = proto.extract(r1, r2);
+-        assert_eq!(seqs.barcodes[0].unwrap(), b"ACGTACGTACGTACGT");
++        assert_eq!(seqs.barcodes[0].as_contiguous().unwrap(), b"ACGTACGTACGTACGT");
+         assert_eq!(seqs.umi.unwrap(), b"AAAAAAAAAAAA");
+         assert_eq!(seqs.reads.len(), 1);
+         assert_eq!(seqs.reads[0], b"TGCATGCATGCA");
+@@ -218,7 +221,7 @@ mod tests {
+         let r2 = b"SECOND_READ_BIO";
+ 
+         let seqs = proto.extract(r1, r2);
+-        assert_eq!(seqs.barcodes[0].unwrap().len(), 16);
++        assert_eq!(seqs.barcodes[0].len(), 16);
+         assert_eq!(seqs.umi.unwrap().len(), 10);
+         assert_eq!(seqs.reads.len(), 2);
+         assert_eq!(seqs.reads[0], b"MAPPABLE_BIO");

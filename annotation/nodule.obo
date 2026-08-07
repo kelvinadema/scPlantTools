@@ -1,0 +1,47 @@
+format-version: 1.2
+ontology: nodule
+!
+! Nodule cell-type extension to the Plant Ontology.
+!
+! The Plant Ontology represents the root nodule as an organ (PO:0003023) but
+! has no terms for its cell types, so the two nodule-specific cell types in the
+! Medicago reference marker file do not survive `CellTypeStandardizer`:
+!
+!     Nodule apex        -> dropped (no PO term)
+!     Nodule parenchyma  -> generalised to `parenchyma`, losing "nodule"
+!
+! For a root-nodule symbiosis project those are exactly the cell types worth
+! keeping, so this file adds them as first-class terms. It is merged into
+! po_final.obo at load time (shared.utils.merged_obo_bytes), so the `is_a` /
+! `part_of` lines below resolve against real PO terms and every ontology
+! operation -- the standardizer's name lookup, annotate.py's parent/child
+! collapse, the `too_general` descendant count -- reasons about these terms
+! exactly as it does about native PO terms. Nothing special-cases them.
+!
+! Deliberately minimal: only the two cell types the marker files actually name.
+! Adding speculative nodule terms nothing votes on would clutter the name
+! lookup and risk mis-matching a future free-text label. Extend it from the
+! data, not from the textbook -- one [Term] stanza per cell type a reference
+! marker file introduces. `Root nodule` is NOT here: PO:0003023 already exists.
+!
+! Ids use a private `NODULE:` namespace so they can never collide with a real
+! PO id. This file is version-controlled and reproducible, unlike po_final.obo
+! (a hand-made import-stripped derivative that no script regenerates); keep it
+! that way.
+
+[Term]
+id: NODULE:0000001
+name: nodule apex
+def: "The apical region of a root nodule. In the indeterminate nodules of Medicago truncatula this is a persistent meristem, so the term is placed under meristematic cell; its markers therefore roll up (weakly) to meristematic cell, which is the intended is_a semantics. Contained in the root nodule via part_of." []
+synonym: "nodule meristem" EXACT []
+synonym: "nodule apical meristem" EXACT []
+is_a: PO:0004010 ! meristematic cell
+relationship: part_of PO:0003023 ! root nodule
+
+[Term]
+id: NODULE:0000002
+name: nodule parenchyma
+def: "Parenchyma of the root nodule (the inner cortex / infection-zone parenchyma). Placed under parenchyma so it is recognised as parenchyma -- the child-wins collapse then keeps the specific 'nodule parenchyma' over a generic 'parenchyma' candidate rather than the reverse -- and part_of root nodule for containment." []
+synonym: "nodule inner cortex" EXACT []
+is_a: PO:0005421 ! parenchyma
+relationship: part_of PO:0003023 ! root nodule

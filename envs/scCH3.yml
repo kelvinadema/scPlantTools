@@ -1,0 +1,61 @@
+# Chapter 3 analysis environment (protoplast vs. nuclei, 3 species).
+#
+# Seventh environment, alongside the six in envs/README.md. Separate because the
+# chapter's notebooks need a stats stack (statsmodels, pingouin) that none of the
+# pipeline stages carry, and because pinning them into scIntegrationV1.12 would
+# risk that environment for the sake of downstream analysis.
+#
+# It deliberately does NOT include scvi-tools: the notebooks only ever read the
+# h5ads that integration already wrote, never train or load a model. If you find
+# yourself needing to load a `model.pt`, that work belongs in the integration or
+# refine stage, not in a chapter notebook.
+#
+#   conda env create -f envs/scCH3.yml
+#   conda activate scCH3
+#   python -m ipykernel install --user --name scCH3 --display-name "Python (scCH3)"
+#
+# Unlike scMappingV3.12 and cellBenderENV, this one needs no post-install patch.
+#
+# NOTE: unpinned on purpose while the chapter is in flux. Once the analysis is
+# settled, replace this with a version-pinned export
+# (`conda env export --no-builds`) the way the other six are, so a result can be
+# reconstructed later -- the thesis conventions require a chapter script to pin
+# what it depended on.
+name: scCH3
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+
+  # Core
+  - numpy
+  - pandas<3            # scanpy/anndata are not clean on pandas 3.x yet
+  - scipy
+  - scikit-learn
+  - h5py
+  - pytables
+
+  # Single-cell
+  - anndata
+  - scanpy
+  - leidenalg           # not used directly, but scanpy imports it on some paths
+  - igraph
+  - scikit-misc         # seurat_v3 HVG flavour
+
+  # Statistics -- the reason this env exists
+  - statsmodels         # stats.mixed_model
+  - pingouin            # paired tests / effect sizes
+
+  # Plotting (exploratory only; thesis figures are built in R)
+  - matplotlib
+  - plotnine
+  - seaborn
+
+  # Notebook
+  - jupyterlab
+  - ipykernel
+  - ipywidgets
+
+  # Config
+  - pyyaml

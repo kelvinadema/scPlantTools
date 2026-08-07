@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=./schemas/mapping_config.schema.json
+mappers:
+  alevin:
+    default:
+      index_ref: AFdefault
+    induced:
+      index_ref: AFinduced
+    maize:
+      index_ref: ZMdefault
+    arabidopsis:
+      index_ref: ATdefault
+
+  kb:
+   default:
+    index_ref: KBdefault
+    extra_mapping_args: ['--workflow', 'nac']
+
+  starsolo:
+    default:
+     index_ref: STARdefault
+     extra_mapping_args: ['--soloFeatures', 'Velocyto']

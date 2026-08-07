@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "QC filter profiles",
+  "type": "object",
+  "properties": {
+    "QCfilterconfigs": {
+      "type": "object",
+      "description": "Named QC-filter profiles, selected per sample by `qc_filter:`.",
+      "additionalProperties": {
+        "type": "object"
+      }
+    }
+  },
+  "required": [
+    "QCfilterconfigs"
+  ],
+  "additionalProperties": false
+}

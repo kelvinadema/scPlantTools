@@ -1,0 +1,80 @@
+# yaml-language-server: $schema=./schemas/pipeline_config.schema.json
+# These paths are relative to the repo root, not absolute -- resolved against
+# whatever the process's cwd is when main.py calls load_config() on them
+# directly, with no joining against this file's own location. Safe because
+# every entrypoint is documented as run as `python -m ... ` from the repo
+# root (see "Running it" in CLAUDE.md); an absolute path here would just be
+# these same five files' own location repeated for no reason.
+# Named datasets this config can run on. `--cohort <name>` selects one, so the
+# command line says which data a run touches instead of it depending on
+# `configs.samples` below. Adding a cohort here does not change any behaviour
+# until --cohort or default_cohort names it.
+#
+# WHY THIS EXISTS. `python -m mapping.main -c configs/pipeline_config.yaml` used
+# to be byte-identical whether it mapped the 40-sample Medicago cohort or the
+# external Arabidopsis/maize reference set -- the difference lived in the
+# `configs.samples` line and switching meant editing it and remembering to put
+# it back.
+cohorts:
+  medicago:
+    samples: configs/sample_metadata.yaml
+  external:
+    samples: configs/external/external_metadata.yaml
+  marcantia:
+    samples: configs/MarcantiaSample.yaml
+
+# Used when --cohort is omitted. Deliberately set to the cohort `configs.samples`
+# already pointed at, so this file's behaviour is unchanged by default.
+default_cohort: external
+
+configs:
+  # Overridden by the selected cohort. Kept as the fallback so a config with no
+  # `cohorts:` block (or a --cohort-less run on one that has none) still works.
+  samples: configs/external/external_metadata.yaml
+  mapping: configs/mapping_config.yaml
+  indexes: configs/index_config.yaml
+  technologies: configs/technology_config.yaml
+  qc: configs/qc_config.yaml
+  filter: configs/filter_config.yaml
+
+output_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/mapping
+
+# CellBender runs in its own conda environment with a patch
+cellbender:
+  env: /home/WUR/adema026/miniconda3/envs/cellBenderENV
+  use_cuda: true
+  learning_rate: 5e-5
+  extra_args: []
+
+# SOLO is part of scVI which is in integrationENV
+doublets:
+  env: /home/WUR/adema026/miniconda3/envs/scIntegrationV1.12
+  use_cuda: true
+  hvg_n_top_genes: 2000
+  layer: corrected_counts
+  n_latent: 10
+  n_hidden: 128
+  n_layers: 2
+  random_state: 42
+  # Minimum number of cells needed to initiate solo run
+  min_cells: 200
+  # Any rate above .5 is considered dubious
+  max_plausible_rate: 0.5
+  # Tuning may be overkill for SOLO, but if you have time...
+  tune: true
+  n_trials: 20
+  tune_metric: elbo_validation
+  n_epochs_kl_warmup: 80
+
+  scrublet:
+    # Expected fraction of doublets according to manufacturer, .04 for 10xv3, unknown for BD
+    expected_doublet_rate: 0.06
+    sim_doublet_ratio: 2.0
+    n_prin_comps: 30
+    min_cells: 50
+  timeout: 7200
+  extra_args: []
+
+# Scratch root for piscem index builds; falls back to $TMPDIR then the system temp
+# dir. Uncomment to override.
+# tmp_dir: /scratch/$SLURM_JOB_ID

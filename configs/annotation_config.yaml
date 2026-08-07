@@ -1,0 +1,584 @@
+AnnotateConfigs:
+
+  # ---------------------------------------------------------------------------
+  # PER-SPECIES PROFILES
+  #
+  # This file replaced three (annotation_config.yaml,
+  # annotation_config_arabidopsis.yaml, annotation_config_zea_mays.yaml) that
+  # shared 73 of their 117 keys. Only the four things below actually differed,
+  # so everything outside this block is now stated once.
+  #
+  # Select with `--species <name>`; `default_species:` applies when the flag is
+  # omitted. `reference_species:` further down is the FULL pool -- the resolver
+  # removes whichever species is the active target, because a species is never
+  # its own reference. That rule used to be applied by hand in three files.
+  # ---------------------------------------------------------------------------
+  default_species: medicago
+
+  species_profiles:
+    medicago:
+      target_species: Medicago_truncatula
+      target_species_files:
+        proteome_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Medicago_truncatula/Medicago_truncatula.fasta
+        annotation_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Medicago_truncatula/Medicago_truncatula.gtf
+        # >MtrunA17_Chr5g0439881 len=181 ... -- the first token is already the gene.
+        gene_id: {from: id}
+        # OPTIONAL: the target species' own *reference* marker table (published,
+        # independent cell-type markers for Medicago), in the same reference format
+        # as the other species. Including it lets Medicago vote on its own clusters
+        # -- the crispest evidence in the run, since same-species markers map to
+        # orthogroups exactly as the target clusters do with no ortholog inference.
+        #
+        # It appears in support_species as `Medicago_truncatula`, i.e. the cluster's
+        # call is corroborated by published Medicago markers. Its universe is
+        # pairwise, so adding it does not change any other species' q-values, and
+        # the proteome set is unchanged so OrthoFinder is not rerun.
+        #
+        # This file uses gene *symbols* (Mt4CL-2, some named by Arabidopsis homolog
+        # like AtPR-1-like), resolved to loci through annotation_file above. Run
+        # --validate-only after adding it to check resolution; a low-coverage
+        # result may need a markers.min_coverage_overrides entry for
+        # Medicago_truncatula. Its nodule cell types are why nodule.obo exists (see
+        # ontology_extensions) -- without it they standardize away.
+        marker_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/marker_files/Medicago truncatula_high_confidence.txt
+        marker_file_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/markers
+
+        # Target datasets to annotate -- one {marker_file_dir}/{method}/{sample}.tsv
+        # per method must exist for each (produced by markerid; see
+        # markers.generate above to have annotation generate them instead).
+        # Medicago-target run only. Zea_mays (CNP0007662_*) and Arabidopsis_thaliana
+        # (GSE123013_*, GSE155304_*) samples are annotated by their own configs --
+        # annotation_config_zea_mays.yaml / annotation_config_arabidopsis.yaml --
+        # since target_species_files describes one species' gene-ID space, and a
+        # non-Medicago sample's marker genes would not resolve against it.
+        samples:
+          # First: CH3's shared-label space (2026-07-30). The five below it predate
+          # the label-space split and are kept because MtTip/N0h serve CH5 and the
+          # single-sample ones are still useful diagnostics -- but MtSZ_labels is
+          # the one CH3's metrics depend on.
+          - MtSZ_labels
+          - MtSZ
+          - MtTip
+          - nMock
+          - pMock
+          - N0h
+      # sample -> AnnData path. Only samples listed here can be generated;
+      # anything else must already have a marker file.
+      samples:
+        # CH3 shared-label space, added 2026-07-30. All six susceptible-zone
+        # samples in one embedding (batch_key: batch, i.e. one per sample --
+        # changed from sample_type 2026-07-31, see the block comment above
+        # MtSZ_labels in configs/integration_config.yaml). Its labels are what
+        # CH3 reads back onto the six per-sample embeddings.
+        #
+        # The per-sample fits (pMock/pNOD/pBAP/nMock/nNOD/nBAP) are deliberately
+        # NOT annotation targets: their leiden ids are arbitrary and per-sample,
+        # so annotating them separately produces label spaces that cannot be
+        # compared, which is the entire reason this target exists.
+        MtSZ_labels: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/MtSZ_labels/MtSZ_labels.h5ad
+        MtSZ: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/MtSZ/MtSZ.h5ad
+        MtTip: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/MtTip/MtTip.h5ad
+        nMock: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/nMock/nMock.h5ad
+        pMock: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/pMock/pMock.h5ad
+        N0h: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/N0h/N0h.h5ad
+
+    arabidopsis:
+      target_species: Arabidopsis_thaliana
+      target_species_files:
+        # Same fields as this species' entry under reference_species in
+        # annotation_config.yaml (Medicago-target) and annotation_config_zea_mays.yaml.
+        proteome_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Arabidopsis_thaliana/Arabidopsis_thaliana.fa
+        annotation_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Arabidopsis_thaliana/Arabidopsis_thaliana.gtf
+        gene_id: {from: id, pattern: '^(AT[1-5CM]G\d+)'}
+        # OPTIONAL: the target species' own *reference* marker table (published,
+        # independent cell-type markers for Arabidopsis), in the same reference
+        # format as the other species. Same self-corroboration mechanism as
+        # Medicago's marker_file in annotation_config.yaml -- see that file's
+        # comment for the full rationale. Appears in support_species as
+        # `Arabidopsis_thaliana`.
+        marker_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/marker_files/Arabidopsis thaliana_high_confidence.txt
+        marker_file_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/markers
+
+        # Target datasets to annotate -- one {marker_file_dir}/{method}/{sample}.tsv
+        # per method must exist for each (produced by markerid; see
+        # markers.generate above to have annotation generate them instead).
+        samples:
+          # CH3's shared-label space (2026-07-30). The per-sample entries below it
+          # are the 2026-07-28 run and are retained for provenance; CH3's
+          # cross-sample metrics read labels from At_tip_labels only.
+          - At_tip_labels
+          - GSE123013_WT_rep1
+          - GSE123013_WT_rep2
+          - GSE123013_WT_rep3
+          - GSE155304_sNucRNA-seq_rep1
+          - GSE155304_sNucRNA-seq_rep2
+          - GSE155304_sNucRNA-seq_rep3
+          - GSE155304_sNucRNA-seq_rep4
+          - GSE155304_sNucRNA-seq_rep5
+      # sample -> AnnData path. Only samples listed here can be generated;
+      # anything else must already have a marker file.
+      samples:
+        # CH3 shared-label space, added 2026-07-30. All seven Arabidopsis tip
+        # samples in one embedding (batch_key: batch, i.e. one per sample --
+        # changed from sample_type 2026-07-31). Supersedes the per-sample
+        # annotations below for CH3's cross-sample metrics -- those were run
+        # 2026-07-28, before this target existed, and their leiden ids are not
+        # comparable between samples.
+        #
+        # Caveat to carry into review, and the batch-key change does NOT fix it:
+        # in this cohort sample_type is fully aliased with study_origin AND
+        # chemistry (GSE123013/10xv2 protoplast vs GSE155304/10xv3 nuclei), so
+        # any correction that makes these labels shared also absorbs study and
+        # chemistry. Per-sample is strictly finer than the modality-level key it
+        # replaces and loses nothing biological here (no treatment axis exists
+        # in this cohort), but the confound is a property of the design. It is
+        # the chapter's worst one and remains a limitation to state.
+        At_tip_labels: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/At_tip_labels/At_tip_labels.h5ad
+        GSE123013_WT_rep1: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/GSE123013_WT_rep1/GSE123013_WT_rep1.h5ad
+        GSE123013_WT_rep2: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/GSE123013_WT_rep2/GSE123013_WT_rep2.h5ad
+        GSE123013_WT_rep3: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/GSE123013_WT_rep3/GSE123013_WT_rep3.h5ad
+        GSE155304_sNucRNA-seq_rep1: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/GSE155304_sNucRNA-seq_rep1/GSE155304_sNucRNA-seq_rep1.h5ad
+        GSE155304_sNucRNA-seq_rep2: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/GSE155304_sNucRNA-seq_rep2/GSE155304_sNucRNA-seq_rep2.h5ad
+        GSE155304_sNucRNA-seq_rep3: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/GSE155304_sNucRNA-seq_rep3/GSE155304_sNucRNA-seq_rep3.h5ad
+        GSE155304_sNucRNA-seq_rep4: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/GSE155304_sNucRNA-seq_rep4/GSE155304_sNucRNA-seq_rep4.h5ad
+        GSE155304_sNucRNA-seq_rep5: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/GSE155304_sNucRNA-seq_rep5/GSE155304_sNucRNA-seq_rep5.h5ad
+
+    zea_mays:
+      target_species: Zea_mays
+      target_species_files:
+        # AGPv4 (Zm00001d), matching the annotation the markers were called on --
+        # not the v5 Zm00001eb release, which shares no gene IDs with them at all.
+        # Same fields as this species' entry under reference_species in
+        # annotation_config.yaml (Medicago-target) and
+        # annotation_config_arabidopsis.yaml.
+        proteome_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Zea_mays/Zea_mays.fa
+        annotation_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Zea_mays/Zea_mays.gff3
+        # This FASTA concatenates two header formats; the provisional gene set
+        # (gene_set=provisional) is dropped deliberately via `exclude` -- see
+        # annotation_config.yaml's reference_species comment for the full
+        # rationale (100% of maize's internal-stop sequences come from it).
+        gene_id:
+          from: attribute
+          key: 'gene:'
+          exclude: 'gene_set=provisional'
+        # OPTIONAL: the target species' own *reference* marker table (published,
+        # independent cell-type markers for Zea_mays), in the same reference format
+        # as the other species. Same self-corroboration mechanism as Medicago's
+        # marker_file in annotation_config.yaml -- see that file's comment for the
+        # full rationale. Appears in support_species as `Zea_mays`.
+        marker_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/marker_files/Zea mays_high_confidence.txt
+        marker_file_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/markers
+
+        # Target datasets to annotate -- one {marker_file_dir}/{method}/{sample}.tsv
+        # per method must exist for each (produced by markerid; see
+        # markers.generate above to have annotation generate them instead).
+        samples:
+          # CH3's shared-label space (2026-07-30). The per-sample entries below it
+          # are the 2026-07-28 run and are retained for provenance; CH3's
+          # cross-sample metrics read labels from Zm_tip_labels only.
+          - Zm_tip_labels
+          - CNP0007662_sc_root_fresh_nuclei_b1_cDNA
+          - CNP0007662_sc_root_fresh_nuclei_b2_cDNA
+          - CNP0007662_sc_root_protoplasts_b1_cDNA
+          - CNP0007662_sc_root_protoplasts_b2_cDNA
+      # sample -> AnnData path. Only samples listed here can be generated;
+      # anything else must already have a marker file.
+      samples:
+        # CH3 shared-label space, added 2026-07-30. All four maize tip samples
+        # in one embedding (batch_key: batch, i.e. one per sample -- changed
+        # from sample_type 2026-07-31; b1/b2 within each modality are genuine
+        # technical batches, so this is strictly finer at no biological cost).
+        # Supersedes the per-sample annotations below for
+        # CH3's cross-sample metrics -- those were run 2026-07-28, before this
+        # target existed, and their leiden ids are not comparable.
+        Zm_tip_labels: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/Zm_tip_labels/Zm_tip_labels.h5ad
+        CNP0007662_sc_root_fresh_nuclei_b1_cDNA: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/CNP0007662_sc_root_fresh_nuclei_b1_cDNA/CNP0007662_sc_root_fresh_nuclei_b1_cDNA.h5ad
+        CNP0007662_sc_root_fresh_nuclei_b2_cDNA: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/CNP0007662_sc_root_fresh_nuclei_b2_cDNA/CNP0007662_sc_root_fresh_nuclei_b2_cDNA.h5ad
+        CNP0007662_sc_root_protoplasts_b1_cDNA: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/CNP0007662_sc_root_protoplasts_b1_cDNA/CNP0007662_sc_root_protoplasts_b1_cDNA.h5ad
+        CNP0007662_sc_root_protoplasts_b2_cDNA: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/CNP0007662_sc_root_protoplasts_b2_cDNA/CNP0007662_sc_root_protoplasts_b2_cDNA.h5ad
+
+
+  # Root for annotation outputs (OrthoFinder cache under here, plus
+  # results/<sample>/<method>/ and review/<sample>_review.html). Previously
+  # always derived from find_root_dir() (the cwd's .root marker), which tied
+  # output location to wherever this repo happened to be checked out -- fine
+  # while code and data lived in the same directory, wrong once the code
+  # checkout moves independently of where results should accumulate. An
+  # absolute path here is what makes the two independent. Falls back to
+  # <repo root>/results/annotation when unset, matching the old behaviour, so
+  # this is optional for any config that does not need to move.
+  output_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/annotation
+  # Regenerable caches (OrthoFinder, prepared proteomes, gene maps, preflight
+  # validation). Kept out of output_dir so the deliverables tree contains only
+  # things you would actually read, and this whole directory is safe to delete
+  # at the cost of one OrthoFinder rerun.
+  cache_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/cache/annotation
+
+  orthofinder:
+    # DIAMOND search threads (-t). The dominant cost of a 10-species run, so
+    # keep this equal to batch_scripts/run_annotation.sh's --cpus-per-task; the two being out
+    # of step just wastes half the allocation.
+    threads: 32
+    analysis_threads: 8
+    # Only Orthogroups.tsv is consumed downstream, so the gene/species tree
+    # inference is skipped (-og). Set false if a later step needs the trees.
+    stop_after_orthogroups: true
+
+  # Plant Ontology used to standardize free-text cell-type labels.
+  ontology_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/annotation/po_final.obo
+
+  # Extra OBO files grafted into the ontology at load, for cell types PO does
+  # not represent. Merged as text so their is_a/part_of resolve against real PO
+  # terms -- a grafted term is then indistinguishable from a native one to the
+  # name lookup, the parent/child collapse and the too_general count. Relative
+  # paths resolve next to ontology_file.
+  #
+  # nodule.obo adds `nodule apex` and `nodule parenchyma`, the two nodule cell
+  # types in the Medicago reference marker file that PO cannot represent (the
+  # first is dropped, the second collapses to generic parenchyma without it).
+  # Remove this line to fall back to plain PO.
+  ontology_extensions:
+    - nodule.obo
+
+  # Sequence hygiene applied to every proteome before OrthoFinder. Reducing to
+  # one protein per gene (the longest) is always done and is not configurable;
+  # these control what happens to the residues themselves.
+  #
+  # Changing anything here changes the prepared FASTAs, hence the cache key,
+  # hence forces a new OrthoFinder run -- which is the intended behaviour, not
+  # a side effect to work around.
+  proteome_processing:
+    # Drop a gene whose longest protein is shorter than this. Measured against
+    # every reference marker file: a floor of 10 drops no marker gene at all,
+    # 30 would drop 12 and 50 would drop 62. It is here to remove obvious junk
+    # (Arabidopsis ships a 1-residue "protein", AT1G64633), not to judge what
+    # counts as a real gene. Raise it only with that measurement redone.
+    min_length: 10
+    # Cassava, rice and maize write a terminal '*' on nearly every sequence
+    # (32729/33135/7879). It is not a residue.
+    strip_trailing_stop: true
+    # Everything outside the 20 standard residues and the IUPAC codes
+    # (BZJUOX) becomes this: internal stop codons -- maize has 1694 sequences
+    # carrying one, all of them provisional gene models -- and Lotus's '.' gap
+    # characters, which appear in 488 sequences, all low-confidence models.
+    # Masked rather than deleted, since deleting a residue shifts the rest of
+    # the sequence relative to its true alignment.
+    mask_char: X
+    # FASTA line width; 0 writes each sequence on a single line.
+    line_width: 60
+    # Per-species overrides, e.g. {Zea_mays: {min_length: 50}}.
+    overrides: {}
+
+  # Cross-check each prepared proteome against its own annotation_file. This is
+  # the only validation a species without a marker_file gets -- proteome-only
+  # references and the target species are skipped entirely by the marker
+  # coverage check, so without this a wrong path or a mismatched annotation
+  # release would pass silently and just produce worse orthogroups.
+  #
+  # Measured as annotation recall: the fraction of the annotation's
+  # protein-coding genes that have a protein in the prepared proteome. The
+  # inverse does not work -- a gene_id rule capturing only a subset scores a
+  # perfect 1.0 that way, since everything it caught is still in the annotation.
+  annotation_crosscheck:
+    # Hard error. Catches a proteome and annotation that are different species
+    # or releases: scoring maize's proteome against Arabidopsis' annotation
+    # gives 0.0000, so the margin is enormous and false positives implausible.
+    min_recall: 0.5
+    # Warning only, and applied only where the annotation declares biotypes.
+    # With them every species here scores >= 0.9994 and a bad gene_id rule's
+    # 0.9655 stands out. Without them the denominator still holds every ncRNA
+    # gene, so a legitimate proteome scores 0.85 (Medicago) to 1.00 -- a range
+    # the subtle failure sits inside, which no threshold can separate.
+    warn_recall: 0.99
+
+  # Phylogenetic weighting of the reference-species vote. The panel is not
+  # balanced: for this legume (Fabaceae) target, 4 of 9 references are grasses
+  # (Poaceae) on the far side of the ~160-My monocot/eudicot split, casting 44%
+  # of the ballots from one clade. Counting them as 4 independent votes
+  # over-weights whatever that one clade agrees on -- the species-axis analogue
+  # of counting 3 cluster-dependent marker methods (one leiden partition) as 3.
+  #
+  # The ranking score's species term becomes  weighted = C + delta*(N - C),
+  # where N = supporting species, C = distinct clades among them. A lone species
+  # is never penalised (its clade's first vote is full), genuinely independent
+  # support is untouched (4 families -> weighted 4), and a redundant clade is
+  # damped (4 grasses -> 1 + 3*delta). SIGNIFICANCE IS UNCHANGED: the Fisher +
+  # BH-FDR test and the consensus/single/ambiguous classification both still use
+  # the raw count; only the ranking (the top call pre-filled for review) moves.
+  #
+  # Remove this whole block, or set delta: 1.0, to get the original n_species
+  # score back exactly.
+  phylogeny:
+    # Fraction of a vote a second (third, ...) member of an already-represented
+    # clade adds. 1.0 = no correction (old behaviour); 0.0 = count distinct
+    # clades only. 0.25 is a starting point, not a measured optimum -- there is
+    # no gold-standard annotation to tune it against.
+    delta: 0.25
+    # clade -> [species]. Taxonomic families. Gene-content similarity from the
+    # orthogroups confirms the coarse structure (eudicot vs grass Jaccard ~0.5
+    # across vs ~0.75 within) but does not cleanly separate Fabaceae from the
+    # other eudicots at any single threshold, so the clades are set by taxonomy
+    # -- which is unambiguous for these 10 species and encodes that Fabaceae is
+    # the clade that matters for a legume target. A species absent here counts
+    # as its own singleton clade (full weight). Medicago is included: its own
+    # reference markers should not triple-count with soybean and Lotus.
+    clades:
+      Fabaceae: [Medicago_truncatula, Glycine_max, Lotus_japonicus]
+      Poaceae: [Oryza_sativa, Sorghum_bicolor, Triticum_aestivum, Zea_mays]
+      Brassicaceae: [Arabidopsis_thaliana]
+      Malvaceae: [Gossypium_arboreum]
+      Euphorbiaceae: [Manihot_esculenta]
+
+  markers:
+    # Reference tables ('<Species>_high_confidence.txt') and this pipeline's own
+    # per-sample marker tables use different column names.
+    reference:
+      cluster: Celltypes
+      gene: Genes
+      tissue: Tissues
+    target:
+      cluster: clusterName
+      gene: gene
+    # q-value cut-off for calling a Fisher test significant. The paper uses
+    # 0.01; 0.05 is kept as the default here.
+    q_threshold: 0.05
+
+    # Tissue(s) of interest, matched case-insensitively against the
+    # `reference.tissue` column. Null uses every tissue. Override with --tissue.
+    #
+    # **Applied to the candidates, not to the markers.** Filtering the marker
+    # tables was tried and reverted: it shrinks the orthogroup universe that
+    # OMGBuilder._species_universe computes, and Fisher's expected overlap is
+    # (X+Y)(X+Z)/N, so a smaller N makes identical evidence less significant.
+    # Measured on MtTip_noHVG with --tissue Root -- with the *same* overlap:
+    #   root epidermis (cluster 1)   X=9   q 2.1e-04 -> 1.2e-02
+    #   root meristem  (cluster 2)   X=33  q 3.3e-15 -> 4.5e-11
+    # 11 of 12 shared calls got worse and annotated genesets halved (wilcoxon
+    # 10 -> 5, cfmf 6 -> 1), including root-specific types like `root hair
+    # cell` whose own markers the filter never touched.
+    #
+    # So every marker votes, and each candidate is flagged `tissue_match`
+    # instead. Available tissues, by species:
+    #   Root          all 9 reference species (14,009 of 33,773 marker rows)
+    #   Leaf          Arabidopsis, Glycine, Manihot, Oryza, Zea
+    #   Stem, Flower, Seed    Arabidopsis, Glycine
+    #   Inflorescence Oryza, Zea
+    tissue: Root
+
+    # Minimum specificity: a candidate subsuming more than this many of the
+    # cell types we have evidence for is flagged `too_general`. Measured over
+    # all six methods on MtTip_noHVG -- descendant counts per candidate term:
+    #   34 portion of plant tissue      16 portion of meristem tissue
+    #   18 multi-tissue plant structure 13 portion of vascular tissue
+    #   17 plant organ                  11 plant epidermis / ground tissue
+    # 15 flags exactly the four contentless terms while keeping `plant
+    # epidermis` (11), which is a legitimate call for a root epidermal cluster.
+    # Flags rather than drops -- the row stays as evidence.
+    max_dataset_children: 15
+
+    # Marker methods to run for the target. Each is annotated independently and
+    # writes to results/annotation/results/{sample}/{method}/, so the six give
+    # six putative annotations of the same cells for the user to compare.
+    #
+    #   wilcoxon, t-test, cosg   cluster-dependent -> need cluster_key; one
+    #                            putative annotation per cluster
+    #   hotspot, lmd, cfmf       cluster-free -> need latent_key; genesets are
+    #                            gene modules, so one annotation per module
+    #
+    # OrthoFinder is unaffected: orthogroups come from the proteomes alone, so
+    # all six share a single cached run and cost only one Fisher pass each.
+    # Override per run with --methods.
+    methods: [wilcoxon, t-test, cosg, hotspot, lmd, cfmf]
+
+    # Genes whose expression is embedded in the review page, by name as it
+    # appears in .var_names. Only these columns travel: the target is 62,750 x
+    # 52,689 and a self-contained HTML cannot carry the matrix, so this is a
+    # deliberate short list rather than an omission.
+    #
+    # Either a path to a file or an inline list. The file is now a single
+    # table shared across all three annotation_config*.yaml (this one,
+    # _zea_mays, _arabidopsis): GeneID/Species/Celltype columns, one row per
+    # marker gene per species. `load_report_gene_groups` (annotation/
+    # review.py) filters to this config's own `target_species` before
+    # building the page's gene dropdown -- a gene from another species'
+    # rows would not exist in this target's .var_names anyway, so filtering
+    # keeps "missing genes" log noise down to genuine mismatches. Grouped by
+    # Celltype in the dropdown (<optgroup> per cell type), in file order.
+    # A plain one-gene-per-line file (old format, or no Celltype column) still
+    # works -- it renders as a flat, ungrouped list, same as before this
+    # existed.
+    #
+    # Values are plotted from the `corrected_counts` layer, normalised with
+    # sc.pp.normalize_total and log1p-transformed. The per-cell total is taken
+    # over EVERY gene, not just these -- see review.gene_expression.
+    report_genes: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/report_genes/reference_markers.tsv
+
+    # Optional: generate a target marker file when one is missing, instead of
+    # failing. Marker identification is a standalone stage (markerid)
+    # and can equally be run by hand:
+    #   python -m markerid.main --anndata <h5ad> --name <sample> \
+    #          --method hotspot --latentkey X_scVI --outdir results/markers
+    generate:
+      # Conda *prefix* of the marker env (the directory containing bin/), since
+      # hotspot/cosg are not installed alongside annotation. $MARKER_ENV
+      # overrides. Omit to import in-process instead of shelling out.
+      env: /home/WUR/adema026/miniconda3/envs/scMarkersV3.12
+      method: wilcoxon
+      cluster_key: leiden_scVI
+      latent_key: X_scVI
+      counts_layer: corrected_counts
+      n_genes: 50
+    # A species whose markers resolve below this fraction aborts the run before
+    # OrthoFinder starts. Applied to the *adjusted* coverage: markers the
+    # species' annotation_file calls non-coding are excluded from the
+    # denominator, since an rRNA has no protein to match by definition.
+    # Measured adjusted coverage is 97.8-100% for every reference species below.
+    min_coverage: 0.8
+    # Per-species floors, for a marker file that legitimately cannot reach the
+    # global one (e.g. it names gene symbols rather than loci and has no
+    # annotation_file to resolve them through).
+    min_coverage_overrides: {}
+
+  # gene_id declares how to recover the *gene* ID from a FASTA header. Three
+  # forms:
+  #   {from: id}                         -> the whole first token
+  #   {from: id, pattern: '...'}         -> regex on the first token
+  #   {from: description, pattern: '...'}-> regex on everything after it
+  #   {from: attribute, key: 'gene:'}    -> a key:value / key=value in the description
+  # Add `template: 'X{}g{}'` to rebuild the ID from multiple capture groups.
+  # Add `exclude: '<regex>'` to skip headers matching it on purpose -- they are
+  # counted as excluded rather than unresolved, so a deliberate subset drop does
+  # not look like a rule that failed to match.
+  #
+  # `exclude` is how low-confidence / provisional gene models are dropped. Every
+  # proteome here was scanned for the usual markers (_LC, provisional, "low
+  # confidence", pseudogene); only two carry any, and both are excluded:
+  #   Zea_mays        gene_set=provisional   12,183 proteins  ->  9,878 genes
+  #   Lotus_japonicus _LC suffix             11,369 proteins  ->  7,960 genes
+  # The rest ship only high-confidence protein-coding models -- verified against
+  # each annotation's biotypes, where every proteome gene is protein_coding
+  # (Gossypium's 1,822 pseudogenes, for instance, have no protein in its FASTA).
+  # A new species needs this checked by hand: grep its headers, and compare its
+  # gene count against annotation_crosscheck.tsv.
+  #
+  # Note free-text mentions are NOT a usable signal and are deliberately not
+  # filtered: Oryza has 11 headers and Medicago 1 whose *description* says
+  # "pseudogene", but they are prose notes ("Pseudogene due to premature stop
+  # mutation (most japonica varieties)") describing genes that are real
+  # elsewhere, not a machine-readable flag.
+  # IDs are then normalized (upper-cased, '-' and '.' -> '_', annotation-version
+  # suffix stripped) on both the proteome and marker side before comparison.
+  #
+  # A species with a marker_file votes on cell types. A species with only a
+  # proteome_file still joins the OrthoFinder run and sharpens the orthogroups,
+  # but casts no votes -- comment it out to drop it from the run entirely.
+  reference_species:
+    Arabidopsis_thaliana:
+      proteome_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Arabidopsis_thaliana/Arabidopsis_thaliana.fa
+      annotation_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Arabidopsis_thaliana/Arabidopsis_thaliana.gtf
+      marker_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/marker_files/Arabidopsis thaliana_high_confidence.txt
+      gene_id: {from: id, pattern: '^(AT[1-5CM]G\d+)'}
+
+    Glycine_max:
+      proteome_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Glycine_max/Glycine_max.fa
+      annotation_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Glycine_max/Glycine_max.gtf
+      marker_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/marker_files/Glycine max_high_confidence.txt
+      # Ensembl Glycine_max_v2.1, replacing the Wm82.gnm6.ann1 file whose IDs
+      # were the inner Glyma.NNGNNNNNN of a compound header. The ID here is a
+      # protein accession and the locus is only in the description:
+      #   >KRH76248 pep chromosome:Glycine_max_v2.1:... gene:GLYMA_01G141900
+      # Marker coverage is higher against this release than the old one (99.4%
+      # direct vs 94.5%).
+      gene_id: {from: attribute, key: 'gene:'}
+
+    Gossypium_arboreum:
+      proteome_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Gossypium_arboreum/Gossypium_arboreum.fa
+      annotation_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Gossypium_arboreum/Gossypium_arboreum.gtf
+      marker_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/marker_files/Gossypium arboreum_high_confidence.txt
+      # >KAK5769799.1 hypothetical protein PVK06_050008 [Gossypium arboreum]
+      # The ID is a protein accession; the locus exists only in the description.
+      gene_id: {from: description, pattern: '\b(PVK06_\d+)\b'}
+
+    Manihot_esculenta:
+      proteome_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Manihot_esculenta/Manihot_esculenta.fa
+      annotation_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Manihot_esculenta/Manihot_esculenta.gff3
+      marker_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/marker_files/Manihot esculenta Crantz_high_confidence.txt
+      # v6.1 proteome, matching the annotation the markers were called on.
+      # Phytozome-format headers (as Zea mays), not the Ensembl 'gene:' of the
+      # v8.1 file this replaced:
+      #   >Manes.S111100.1.p pacid=... transcript=... locus=Manes.S111100 ID=...v6.1
+      # 'locus=' rather than a regex on the ID, so scaffold genes (Manes.S111100)
+      # are picked up alongside the chromosomal ones.
+      gene_id: {from: attribute, key: 'locus='}
+
+    Oryza_sativa:
+      proteome_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Oryza_sativa/Oryza_sativa.fasta
+      annotation_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Oryza_sativa/Oryza_sativa.gtf
+      marker_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/marker_files/Oryza sativa_high_confidence.txt
+      # >Os01t0100100-01 -- transcript IDs use 't' where gene IDs use 'g'.
+      gene_id: {from: id, pattern: '^Os(\d+)t(\d+)', template: 'Os{}g{}'}
+
+    Sorghum_bicolor:
+      proteome_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Sorghum_bicolor/Sorghum_bicolor.fa
+      annotation_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Sorghum_bicolor/Sorghum_bicolor.gtf
+      marker_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/marker_files/Sorghum bicolor_high_confidence.txt
+      # >OQU75661 pep ... gene:SORBI_3K044417 -- as with Gossypium, the ID is an
+      # accession and the locus is only in the description.
+      gene_id: {from: attribute, key: 'gene:'}
+
+    Triticum_aestivum:
+      proteome_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Triticum_aestivum/Triticum_aestivum.fa
+      annotation_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Triticum_aestivum/Triticum_aestivum.gtf
+      marker_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/marker_files/Triticum aestivum_high_confidence.txt
+      gene_id: {from: attribute, key: 'gene:'}
+
+    Zea_mays:
+      proteome_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Zea_mays/Zea_mays.fa
+      annotation_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Zea_mays/Zea_mays.gff3
+      marker_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/marker_files/Zea mays_high_confidence.txt
+      # AGPv4 (Zm00001d), matching the annotation the markers were called on --
+      # not the v5 Zm00001eb release, which shares no gene IDs with them at all
+      # and drops coverage to zero.
+      #
+      # This FASTA concatenates two header formats:
+      #   >Zm00001d027230_P001 pep chromosome:AGPv4:... gene:Zm00001d027230
+      #   >Zm00001d027228_P001 gene_set=provisional gene=Zm00001d027228
+      # The second is the provisional gene set: 9,878 genes that resolve *no*
+      # additional markers (measured) and are demonstrably lower quality --
+      # 100% of the 1,694 maize sequences carrying an internal stop codon come
+      # from it. Dropped deliberately via `exclude` rather than by letting the
+      # 'gene:' rule fail to match them, which would report 12,183 unresolved
+      # headers and read as a broken rule instead of a decision.
+      #
+      # The GFF3 types its non-coding genes as features ('lincRNA_gene') rather
+      # than tagging them with a biotype; genemap.py reads both forms, which is
+      # what classifies 37 of this species' markers as expected-missing.
+      gene_id:
+        from: attribute
+        key: 'gene:'
+        exclude: 'gene_set=provisional'
+
+    Lotus_japonicus:
+      proteome_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Lotus_japonicus/Lotus_japonicus.fa
+      annotation_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Lotus_japonicus/Lotus_japonicus.gff3
+      marker_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/marker_files/Lotus japonicus_high_confidence.txt
+      # PGSB marks its low-confidence gene models with an _LC suffix on the ID
+      # (>LotjaGi0g1v0000900_LC.1): 11,369 proteins, 7,960 genes, median length
+      # 155aa against 388aa for the high-confidence set, and the source of all
+      # 488 sequences in this proteome containing '.' gap characters. Dropped
+      # for the same reason as maize's provisional set -- this species casts no
+      # cell-type votes and exists only to sharpen orthogroups, which
+      # fragmentary models do not do.
+      gene_id:
+        from: id
+        pattern: '^(LotjaGi\S+?)\.\d+$'
+        exclude: '_LC\.'
+    # Formerly this config's target_species_files (annotation_config.yaml).
+    # Same proteome/annotation/gene_id/marker_file -- Medicago now votes as a
+    # reference on the Arabidopsis clusters instead of being the target.
+    Medicago_truncatula:
+      proteome_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Medicago_truncatula/Medicago_truncatula.fasta
+      annotation_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Proteomes/Medicago_truncatula/Medicago_truncatula.gtf
+      gene_id: {from: id}
+      marker_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/marker_files/Medicago truncatula_high_confidence.txt
+

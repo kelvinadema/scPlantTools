@@ -1,0 +1,5 @@
+# Build tree and toolchain for the patched piscem: large, machine-specific, and
+# fully reproducible from piscem_bd_rhapsody/*.patch via piscem-bd/build.sh.
+piscem-bd/src/
+piscem-bd/rust/
+bin/

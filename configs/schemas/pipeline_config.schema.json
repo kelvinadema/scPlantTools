@@ -1,0 +1,195 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Mapping stage config-of-configs",
+  "type": "object",
+  "properties": {
+    "cohorts": {
+      "type": "object",
+      "description": "Named datasets this pipeline config can run on, so the command line says which one a run uses instead of it depending on a pointer inside this file. Each value is a mapping with a required `samples:` (sample sheet path) and an optional `output_dir:`. Select with --cohort; `default_cohort:` is used when the flag is omitted. Omit this block entirely to keep the old behaviour, where `configs.samples` alone selects the dataset."
+    },
+    "default_cohort": {
+      "type": "string",
+      "description": "Cohort used when --cohort is not given. Without it, a config that declares cohorts REQUIRES the flag -- deliberately, so nothing silently picks a dataset."
+    },
+    "configs": {
+      "type": "object",
+      "description": "Paths to the sub-configs this stage reads.",
+      "properties": {
+        "samples": {
+          "type": "string",
+          "description": "Sample sheet. Optional only when `cohorts:` is declared, in which case the selected cohort supplies it."
+        },
+        "mapping": {
+          "type": "string"
+        },
+        "indexes": {
+          "type": "string"
+        },
+        "technologies": {
+          "type": "string"
+        },
+        "qc": {
+          "type": "string"
+        },
+        "filter": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "filter",
+        "indexes",
+        "mapping",
+        "qc",
+        "technologies"
+      ],
+      "additionalProperties": false
+    },
+    "output_dir": {
+      "type": "string",
+      "description": "Mapping stage output root. No default -- a site-specific data location with no sensible fallback (main.py raises without it)."
+    },
+    "log_dir": {
+      "type": "string",
+      "description": "Defaults to \"logs\", relative to cwd."
+    },
+    "tmp_dir": {
+      "type": "string",
+      "description": "Scratch root for index builds. Falls back to $TMPDIR then the system temp dir. piscem index builds are unreliable on Lustre."
+    },
+    "cellbender": {
+      "type": "object",
+      "description": "CellBender runs from its own conda env as a subprocess.",
+      "properties": {
+        "env": {
+          "type": "string",
+          "description": "Conda PREFIX (the directory containing bin/), not the binary. Overridable with $CELLBENDER_ENV."
+        },
+        "use_cuda": {
+          "type": "boolean",
+          "description": "Passes --cuda; needs a GPU node."
+        },
+        "learning_rate": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "extra_args": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "integer"
+            ]
+          }
+        }
+      }
+    },
+    "doublets": {
+      "type": "object",
+      "description": "Per-sample doublet detection (scvi-tools SOLO). Runs from its own conda env as a subprocess, for the same reason CellBender does: scvi-tools does not support the pandas 3.x the mapping stage is on. Whether its calls remove cells is set by `solo.mode` in filter_config.yaml, not here.",
+      "properties": {
+        "env": {
+          "type": "string",
+          "description": "Conda PREFIX (the directory containing bin/), not the binary. Overridable with $DOUBLET_ENV. Must have scvi-tools installed."
+        },
+        "use_cuda": {
+          "type": "boolean",
+          "description": "Train on GPU. Mapping already needs a GPU node for CellBender, so this costs no extra infrastructure."
+        },
+        "max_epochs": {
+          "type": "integer",
+          "description": "scVI training epochs. Left unset, scvi-tools picks a cell-count-dependent default."
+        },
+        "n_epochs_kl_warmup": {
+          "type": "integer",
+          "description": "KL warmup CEILING in epochs for the throwaway scVI model (into plan_kwargs). SingleCellIntegrate scales warmup to half the effective max_epochs and clamps this value down if it would not complete, so warmup always finishes; left unset it is derived the same way. scvi's own default (400) never completes on these small models and drove the 100%-doublet failure (scvi-tools #507). Applies to the final fit and, when tune is on, the tuning trials."
+        },
+        "n_latent": {
+          "type": "integer",
+          "description": "scVI latent dimensions."
+        },
+        "n_hidden": {
+          "type": "integer",
+          "description": "scVI hidden units per layer."
+        },
+        "hvg_n_top_genes": {
+          "type": "integer",
+          "description": "HVGs the model is trained on. Selected on the mapping side with scanpy so the temp exchange file stays small."
+        },
+        "layer": {
+          "type": "string",
+          "description": "Layer the model trains on. scVI's likelihood is defined on counts, so \"raw_counts\" (integers) rather than CellBender-corrected floats."
+        },
+        "n_layers": {
+          "type": "integer"
+        },
+        "random_state": {
+          "type": "integer"
+        },
+        "min_cells": {
+          "type": "integer",
+          "description": "Fewest QC-passed cells SOLO will run on (default 200). A technical floor, not a quality judgement, so falling below it is a recorded skip rather than the advisory downgrade sample_quality applies. Below ~10 cells scvi-tools has no validation split at all and autotune dies in ray; well above that the model still fails to converge and calls ~100% of cells doublets."
+        },
+        "max_plausible_rate": {
+          "type": "number",
+          "description": "Doublet rate above which the fitted model is judged unconverged (default 0.5): its calls are downgraded to advisory and flagged in the report. Real 10x rates run ~1-30%."
+        },
+        "tune": {
+          "type": "boolean",
+          "description": "Autotune hyperparameters. Runs PER SAMPLE, so a 40-sample cohort means 40 tuning jobs; off by default."
+        },
+        "n_trials": {
+          "type": "integer",
+          "description": "Autotune trials per sample."
+        },
+        "tune_metric": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Seconds before the worker subprocess is killed."
+        },
+        "extra_args": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "integer"
+            ]
+          }
+        },
+        "scrublet": {
+          "type": "object",
+          "description": "Scrublet, the second per-sample doublet caller (scanpy). Runs in-process (CPU, no torch/GPU/subprocess) so it also covers samples SOLO skips; its calls form the SOLO+Scrublet consensus. Whether each of SOLO/Scrublet/consensus removes cells is set per-method by mode: in filter_config.yaml, not here.",
+          "properties": {
+            "expected_doublet_rate": {
+              "type": "number",
+              "description": "Scrublet's prior on the simulated doublet fraction (default 0.06)."
+            },
+            "sim_doublet_ratio": {
+              "type": "number",
+              "description": "Simulated doublets per observed cell (default 2.0)."
+            },
+            "n_prin_comps": {
+              "type": "integer",
+              "description": "PCA components for Scrublet's kNN. Auto-reduced below the cell count on small samples."
+            },
+            "layer": {
+              "type": "string",
+              "description": "Counts layer Scrublet simulates from. Unset follows doublets.layer. All genes are used -- Scrublet does its own gene-variability selection."
+            },
+            "min_cells": {
+              "type": "integer",
+              "description": "Fewest QC-passed cells Scrublet runs on (default 50). Below it is a recorded skip; lower than SOLO's floor since Scrublet has no validation split."
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "configs",
+    "output_dir"
+  ]
+}

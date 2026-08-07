@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=./schemas/sample_sheet.schema.json
+# Applied to every sample below; any sample may override any of these
+# simply by stating the key itself.
+defaults:
+  fallback: ratio_global
+  mapper: alevin
+  mapping_config: marcantia
+  qc_filter: default
+  sample_type: protoplast
+  tech: bd_rhapsody
+
+samples:
+  Mpaleacea:
+    batch: Marcantia_1
+    fastq1:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Marcantia/protoplast/CGr013_1.fq.gz
+    fastq2:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Marcantia/protoplast/CGr013_2.fq.gz

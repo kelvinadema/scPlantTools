@@ -1,0 +1,199 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Annotation refinement targets",
+  "type": "object",
+  "properties": {
+    "RefineConfigs": {
+      "type": "object",
+      "properties": {
+        "targets": {
+          "type": "object",
+          "description": "sample name -> target. The name must match the one stage 1 keyed its outputs on.",
+          "additionalProperties": {
+            "type": "object",
+            "description": "One refinement target: an annotated dataset, its decisions, and where the six per-method models are written.",
+            "properties": {
+              "adata": {
+                "type": "string",
+                "description": "The .h5ad stage 1 annotated. Must be the same object -- the geneset scores and decisions are keyed on its barcodes."
+              },
+              "batch_key": {
+                "type": "string",
+                "description": ".obs column scVI corrects on. Null/absent for a single-sample target, which also forces the single-batch scib fallback."
+              },
+              "counts_layer": {
+                "type": "string",
+                "description": "Raw counts layer for scVI. NOT a normalised one -- scVI models counts directly."
+              },
+              "covariates": {
+                "type": [
+                  "array",
+                  "string"
+                ],
+                "description": ".obs columns passed to scVI as continuous covariates. Verified safe here: SCANVI.from_scvi_model copies the scVI setup args through, so unlike SOLO it does not reject a covariate-carrying source model.",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "methods": {
+                "type": "array",
+                "description": "Marker methods to refine. Each is an independent tune+fit, so this is the SLURM array width.",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "adata"
+            ]
+          }
+        },
+        "annotation_dir": {
+          "type": "string",
+          "description": "Stage 1 output root holding {sample}/{method}/. Default: results/annotation."
+        },
+        "output_dir": {
+          "type": "string",
+          "description": "Default: results/refine."
+        },
+        "cache_dir": {
+          "type": "string",
+          "description": "Regenerable caches: OrthoFinder runs, prepared primary-transcript proteomes, gene maps and preflight validation. Kept out of `output_dir` so the deliverables tree holds only what you would read, and so this directory is safe to delete at the cost of one OrthoFinder rerun. Default: a cache/annotation/ sibling of output_dir."
+        },
+        "log_dir": {
+          "type": "string"
+        },
+        "ontology_file": {
+          "type": "string",
+          "description": "Plant Ontology .obo, read only to turn PO ids into readable class names for .obs. Optional: without it the annotation columns carry bare PO ids."
+        },
+        "ontology_extensions": {
+          "type": "array",
+          "description": "Extension .obo files grafted into the ontology, matching annotation_config so a group named with a grafted id (a NODULE: nodule cell type) shows its name in .obs rather than the bare id. Relative paths resolve next to ontology_file.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "seeds": {
+          "type": "object",
+          "description": "How the confident core of each geneset is chosen. Both values are placeholders -- they yield ~7.5% of cells as seeds on MtTip_noHVG, which is deliberate but untested against propagation quality.",
+          "properties": {
+            "quantile": {
+              "type": "number",
+              "description": "Per-geneset score quantile a cell must clear. Per geneset, not global: scores are not comparable across genesets."
+            },
+            "margin": {
+              "type": "number",
+              "description": "Z-score gap the best geneset must beat the runner-up by, else the cell is left for scANVI."
+            },
+            "min_seed_cells": {
+              "type": "integer",
+              "description": "Classes with fewer seeds are returned to Unassigned. Guess; scANVI's real floor is unknown."
+            }
+          }
+        },
+        "safeguards": {
+          "type": "object",
+          "properties": {
+            "min_confidence": {
+              "type": "number",
+              "description": "Max-posterior floor. PLACEHOLDER -- the 0.8 default was set against a nearest-centroid softmax, which is far flatter than a real scANVI posterior. Calibrate on the first run."
+            },
+            "max_novelty_ratio": {
+              "type": "number",
+              "description": "Measured: 1.25 catches 50.3% of held-out orphans for 0.7% false positives."
+            },
+            "reference_quantile": {
+              "type": "number"
+            }
+          }
+        },
+        "model": {
+          "type": "object",
+          "properties": {
+            "tune": {
+              "type": "boolean",
+              "description": "scib-metric autotuning. Off until step 5 lands."
+            },
+            "n_trials": {
+              "type": "integer",
+              "description": "30 is a screening budget, not an optimum -- 6 methods x 200 trials with scib per trial is 240-600 GPU-hours."
+            },
+            "tune_metric": {
+              "type": "string",
+              "description": "The scib strings select the scib tuner (scvi dispatches on the metric name). \"Total\" is the 0.6 bio / 0.4 batch aggregate. A single-batch target falls back to \"Bio conservation\".",
+              "enum": [
+                "Total",
+                "Bio conservation",
+                "Batch correction",
+                "elbo_validation"
+              ]
+            },
+            "max_epochs": {
+              "type": "integer"
+            },
+            "model_params": {
+              "type": "object",
+              "description": "Passed to the scVI constructor when tune is off. Empty means scvi's own defaults."
+            },
+            "scanvi_params": {
+              "type": "object",
+              "description": "Passed to SCANVI.from_scvi_model. n_hidden/n_latent etc. are inherited from the scVI model and warned about if repeated here."
+            },
+            "scanvi_max_epochs": {
+              "type": "integer"
+            },
+            "n_samples_per_label": {
+              "type": "integer",
+              "description": "scANVI oversamples labelled cells per epoch. Guards against the seed set being a small fraction of the data."
+            }
+          }
+        },
+        "embedding": {
+          "type": "object",
+          "description": "Neighbours/UMAP/Leiden on the scANVI latent, via shared/dimred.py.",
+          "properties": {
+            "n_neighbors": {
+              "type": "integer"
+            },
+            "metric": {
+              "type": "string"
+            },
+            "min_dist": {
+              "type": "number"
+            },
+            "leiden_resolution": {
+              "type": "number"
+            },
+            "random_state": {
+              "type": "integer"
+            }
+          }
+        },
+        "report": {
+          "type": "object",
+          "properties": {
+            "genes": {
+              "type": "array",
+              "description": "Genes whose expression is embedded in the HTML. Full expression cannot be inlined (62,750 x 52,689), so only these columns travel. No real list exists yet -- until one does, treat the panels as a UI test.",
+              "items": {
+                "type": "string"
+              }
+            },
+            "max_points": {
+              "type": "integer",
+              "description": "Cells drawn in the report scatter. Above this the payload is subsampled."
+            }
+          }
+        }
+      },
+      "required": [
+        "targets"
+      ]
+    }
+  },
+  "required": [
+    "RefineConfigs"
+  ],
+  "additionalProperties": false
+}

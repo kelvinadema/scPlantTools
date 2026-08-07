@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=./schemas/index_config.schema.json
+indexes:
+  AFdefault:
+    mapper: alevin
+    idx_path: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/indices/AFdefault
+    extra_index_args: ['--ref-type', 'spliceu', '--rlen', '90']
+    genome:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/genomes/Medicago/Mt5-genome1.9.fasta
+    gtf:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/genomes/Medicago/Mt5-annot_reformattedTID.gtf
+
+  ATdefault:
+    mapper: alevin
+    idx_path: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/indices/ATdefault
+    extra_index_args: ['--ref-type', 'spliceu', '--rlen', '90']
+    genome:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/genomes/Arabidopsis/Arabidopsis_thaliana-genome.fa
+    gtf:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/genomes/Arabidopsis/Arabidopsis_thaliana.gtf
+  
+  AFinduced:
+    mapper: alevin
+    idx_path: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/indices/AFdinduced
+    extra_index_args: ['--ref-type', 'spliceu', '--rlen', '90']
+    genome:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/genomes/Medicago/Mt5-genome1.9.fasta
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/genomes/Smeliloti/Sm2011_genome.fa
+    gtf:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/genomes/Medicago/Mt5-annot_reformattedTID.gtf
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/genomes/Smeliloti/Sm2011.gtf
+
+  ZMdefault:
+    mapper: alevin
+    idx_path: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/indices/ZMdefault
+    extra_index_args: ['--ref-type', 'spliceu', '--rlen', '90']
+    genome:
+      # Ships already-merged (nuclear + Mt + Pt in one file) as of the
+      # 2026-07-27 genome update -- no fasta build step needed any more.
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/genomes/Zea_mays/Zea_mays.fa
+    gtf:
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/genomes/Zea_mays/Zea_mays-full.gtf

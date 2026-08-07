@@ -1,0 +1,544 @@
+diff --git a/src/extract.rs b/src/extract.rs
+index 981e3dc..d79dbde 100644
+--- a/src/extract.rs
++++ b/src/extract.rs
+@@ -145,11 +145,80 @@ enum ExtractTarget {
+     Read,
+ }
+ 
++/// The sequence extracted for one barcode level.
++///
++/// A level is usually a single contiguous span of the read, but split-barcode
++/// chemistries interleave the blocks of one logical barcode with linker
++/// sequence, so a level can be assembled from several disjoint pieces. The
++/// pieces are held in read order and are concatenated left to right.
++#[derive(Debug, Clone, Default, PartialEq, Eq)]
++pub struct BarcodeSeq<'a> {
++    pieces: SmallVec<[&'a [u8]; MAX_BC_PIECES]>,
++}
++
++impl<'a> BarcodeSeq<'a> {
++    /// Build a level from a single contiguous piece.
++    #[inline]
++    pub fn from_piece(piece: &'a [u8]) -> Self {
++        let mut pieces = SmallVec::new();
++        pieces.push(piece);
++        Self { pieces }
++    }
++
++    /// Append the next piece of this level, in read order.
++    #[inline]
++    pub fn push(&mut self, piece: &'a [u8]) {
++        self.pieces.push(piece);
++    }
++
++    /// True when no piece of this level was extracted.
++    #[inline]
++    pub fn is_empty(&self) -> bool {
++        self.pieces.is_empty() || self.pieces.iter().all(|p| p.is_empty())
++    }
++
++    /// Total width of the assembled barcode, in bases.
++    #[inline]
++    pub fn len(&self) -> usize {
++        self.pieces.iter().map(|p| p.len()).sum()
++    }
++
++    /// The individual pieces, in read order.
++    #[inline]
++    pub fn pieces(&self) -> &[&'a [u8]] {
++        &self.pieces
++    }
++
++    /// The barcode as one borrowed slice, when it is a single contiguous piece.
++    ///
++    /// This is the zero-copy fast path that every single-piece chemistry takes;
++    /// a split barcode returns `None` and must go through [`Self::assemble_into`].
++    #[inline]
++    pub fn as_contiguous(&self) -> Option<&'a [u8]> {
++        match self.pieces.as_slice() {
++            [single] => Some(single),
++            _ => None,
++        }
++    }
++
++    /// Concatenate the pieces into `buf` and return the assembled barcode.
++    ///
++    /// `buf` is caller-owned so it can be reused across reads; this performs no
++    /// allocation once it has grown to the barcode width.
++    pub fn assemble_into<'b>(&self, buf: &'b mut SmallVec<[u8; MAX_BC_TOTAL_LEN]>) -> &'b [u8] {
++        buf.clear();
++        for piece in &self.pieces {
++            buf.extend_from_slice(piece);
++        }
++        buf.as_slice()
++    }
++}
++
+ /// Result of extracting sequences from a read pair.
+ #[derive(Debug)]
+ pub struct ExtractedSeqs<'a> {
+     /// Barcodes by level. For single-barcode protocols, only index 0 is used.
+-    pub barcodes: SmallVec<[Option<&'a [u8]>; MAX_INLINE_BARCODES]>,
++    pub barcodes: SmallVec<[BarcodeSeq<'a>; MAX_INLINE_BARCODES]>,
+     /// UMI sequence.
+     pub umi: Option<&'a [u8]>,
+     /// Biological read(s). For SE: one entry. For PE: two entries.
+@@ -300,7 +369,10 @@ impl SimpleExtractor {
+             reads.push(&r1[sg.read_offset..]);
+         }
+         ExtractedSeqs {
+-            barcodes: smallvec![barcode],
++            barcodes: smallvec![match barcode {
++                Some(bc) => BarcodeSeq::from_piece(bc),
++                None => BarcodeSeq::default(),
++            }],
+             umi,
+             reads,
+         }
+@@ -312,7 +384,7 @@ impl InferableExtractor {
+     #[inline]
+     pub fn extract<'a>(&self, r1: &'a [u8], r2: &'a [u8]) -> ExtractedSeqs<'a> {
+         let mut result = ExtractedSeqs {
+-            barcodes: SmallVec::from_elem(None, self.meta.num_bc_levels),
++            barcodes: SmallVec::from_elem(BarcodeSeq::default(), self.meta.num_bc_levels),
+             umi: None,
+             reads: SmallVec::new(),
+         };
+@@ -326,7 +398,7 @@ impl BoundaryResolvedExtractor {
+     #[inline]
+     pub fn extract<'a>(&self, r1: &'a [u8], r2: &'a [u8]) -> ExtractedSeqs<'a> {
+         let mut result = ExtractedSeqs {
+-            barcodes: SmallVec::from_elem(None, self.meta.num_bc_levels),
++            barcodes: SmallVec::from_elem(BarcodeSeq::default(), self.meta.num_bc_levels),
+             umi: None,
+             reads: SmallVec::new(),
+         };
+@@ -354,7 +426,9 @@ fn build_geom_meta(
+     for level in 0..num_bc_levels {
+         let r1_len = r1_bc_info.get(level).copied().unwrap_or(0);
+         let r2_len = r2_bc_info.get(level).copied().unwrap_or(0);
+-        bc_lens.push(r1_len.max(r2_len));
++        // A level lives on one read or is split across both; either way its
++        // width is the total of the pieces contributed by each read.
++        bc_lens.push(r1_len + r2_len);
+ 
+         let r1_pad = r1_bc_padding.get(level).copied().unwrap_or(false);
+         let r2_pad = r2_bc_padding.get(level).copied().unwrap_or(false);
+@@ -1014,7 +1088,7 @@ fn assign_target<'a>(target: &ExtractTarget, slice: &'a [u8], result: &mut Extra
+     match target {
+         ExtractTarget::Barcode(level) => {
+             if (*level as usize) < result.barcodes.len() {
+-                result.barcodes[*level as usize] = Some(slice);
++                result.barcodes[*level as usize].push(slice);
+             }
+         }
+         ExtractTarget::Umi => {
+@@ -1568,7 +1642,8 @@ fn record_target_info(
+                 bc_lens.push(0);
+                 bc_needs_padding.push(false);
+             }
+-            bc_lens[level as usize] = len;
++            // A level may be assembled from several pieces, so widths accumulate.
++            bc_lens[level as usize] += len;
+             bc_needs_padding[level as usize] |= needs_padding;
+         }
+         ExtractTarget::Umi => {
+@@ -1593,7 +1668,7 @@ mod tests {
+         let r2 = b"BIOLOGICAL_READ_SEQUENCE_HERE";
+ 
+         let result = compiled.extract(r1, r2);
+-        assert_eq!(result.barcodes[0], Some(&r1[..16]));
++        assert_eq!(result.barcodes[0].as_contiguous(), Some(&r1[..16]));
+         assert_eq!(result.umi, Some(&r1[16..28]));
+         assert_eq!(result.reads.len(), 1);
+         assert_eq!(result.reads[0], r2.as_slice());
+@@ -1614,8 +1689,8 @@ mod tests {
+ 
+         let result = compiled.extract(r1, &r2);
+         assert_eq!(result.barcodes.len(), 2);
+-        assert_eq!(result.barcodes[0], Some(&r2[68..76])); // sample BC (s -> b0)
+-        assert_eq!(result.barcodes[1], Some(&r1[..16])); // cell BC (b -> b1)
++        assert_eq!(result.barcodes[0].as_contiguous(), Some(&r2[68..76])); // sample BC (s -> b0)
++        assert_eq!(result.barcodes[1].as_contiguous(), Some(&r1[..16])); // cell BC (b -> b1)
+         assert_eq!(result.umi, Some(&r1[16..28]));
+         assert_eq!(result.reads[0], &r2[..50]);
+     }
+@@ -1644,9 +1719,9 @@ mod tests {
+         let r2 = b"BIOLOGICAL_READ";
+ 
+         let result = compiled.extract(&r1, r2);
+-        assert_eq!(result.barcodes[1], Some(bc.as_slice())); // cell BC
++        assert_eq!(result.barcodes[1].as_contiguous(), Some(bc.as_slice())); // cell BC
+         assert_eq!(result.umi, Some(umi.as_slice()));
+-        assert_eq!(result.barcodes[0], Some(sample.as_slice())); // sample BC
++        assert_eq!(result.barcodes[0].as_contiguous(), Some(sample.as_slice())); // sample BC
+         assert_eq!(result.reads[0], r2.as_slice());
+     }
+ 
+@@ -1670,7 +1745,7 @@ mod tests {
+         let r2 = b"BIO";
+ 
+         let result = compiled.extract(&r1, r2);
+-        assert_eq!(result.barcodes[0], Some(sample.as_slice()));
++        assert_eq!(result.barcodes[0].as_contiguous(), Some(sample.as_slice()));
+     }
+ 
+     #[test]
+@@ -1684,9 +1759,9 @@ mod tests {
+ 
+         let result = compiled.extract(&r1, r2);
+         // Sample BC should be None (anchor not found)
+-        assert_eq!(result.barcodes[0], None);
++        assert!(result.barcodes[0].is_empty());
+         // Cell BC and UMI should still be extracted (before the anchor search)
+-        assert!(result.barcodes[1].is_some());
++        assert!(!result.barcodes[1].is_empty());
+         assert!(result.umi.is_some());
+     }
+ 
+@@ -1713,7 +1788,7 @@ mod tests {
+         let r2 = b"BIO";
+ 
+         let result = compiled.extract(&r1, r2);
+-        assert_eq!(result.barcodes[0], Some(sample.as_slice()));
++        assert_eq!(result.barcodes[0].as_contiguous(), Some(sample.as_slice()));
+     }
+ 
+     #[test]
+@@ -1737,7 +1812,7 @@ mod tests {
+         r1.extend_from_slice(b"TAIL");
+ 
+         let result = compiled.extract(&r1, b"BIO");
+-        assert_eq!(result.barcodes[0], Some(bc.as_slice()));
++        assert_eq!(result.barcodes[0].as_contiguous(), Some(bc.as_slice()));
+         assert_eq!(result.umi, Some(umi.as_slice()));
+     }
+ 
+@@ -1758,7 +1833,7 @@ mod tests {
+         let r2 = b"TTTTTTTTTTTTtail";
+         let result = compiled.extract(&r1, r2);
+         assert_eq!(result.reads[0], read_prefix.as_slice());
+-        assert_eq!(result.barcodes[0], Some(barcode.as_slice()));
++        assert_eq!(result.barcodes[0].as_contiguous(), Some(barcode.as_slice()));
+         assert_eq!(result.umi, Some(&r2[..12]));
+     }
+ 
+@@ -1771,7 +1846,7 @@ mod tests {
+         let r2 = b"TTTTTTTTTTTT";
+         let result = compiled.extract(r1, r2);
+         assert_eq!(result.reads[0], b"READ".as_slice());
+-        assert_eq!(result.barcodes[0], Some(b"XYZACBC".as_slice()));
++        assert_eq!(result.barcodes[0].as_contiguous(), Some(b"XYZACBC".as_slice()));
+     }
+ 
+     #[test]
+@@ -1783,7 +1858,7 @@ mod tests {
+         let r2 = b"BIO";
+ 
+         let result = compiled.extract(r1, r2);
+-        assert_eq!(result.barcodes[1], None);
++        assert!(result.barcodes[1].is_empty());
+         assert_eq!(result.umi, None);
+     }
+ 
+@@ -1815,4 +1890,104 @@ mod tests {
+         );
+         assert!(compiled.meta().normalization.umi_needs_padding);
+     }
++
++    /// BD Rhapsody Enhanced Bead V2: one 27bp cell label carried in three 9bp
++    /// blocks separated by fixed linkers, behind a 0-3bp diversity offset.
++    const BD_RHAPSODY_V2: &str = "1{x[0-3]b[9]f[GTGA]b[9]f[GACA]b[9]u[8]}2{r:}";
++
++    fn bd_read1(offset: &[u8], cls1: &[u8], cls2: &[u8], cls3: &[u8], umi: &[u8]) -> Vec<u8> {
++        let mut r1 = Vec::new();
++        r1.extend_from_slice(offset);
++        r1.extend_from_slice(cls1);
++        r1.extend_from_slice(b"GTGA");
++        r1.extend_from_slice(cls2);
++        r1.extend_from_slice(b"GACA");
++        r1.extend_from_slice(cls3);
++        r1.extend_from_slice(umi);
++        r1
++    }
++
++    #[test]
++    fn split_barcode_declares_summed_width() {
++        let geom = parse_geometry(BD_RHAPSODY_V2).unwrap();
++        crate::validate_geometry(&geom).unwrap();
++        let compiled = CompiledGeom::from_fragment_geom(&geom).unwrap();
++        assert_eq!(compiled.meta().num_bc_levels, 1);
++        assert_eq!(compiled.meta().bc_lens.as_slice(), &[27]);
++        assert_eq!(compiled.meta().umi_len, 8);
++    }
++
++    #[test]
++    fn split_barcode_concatenates_pieces_in_read_order() {
++        let geom = parse_geometry(BD_RHAPSODY_V2).unwrap();
++        let compiled = CompiledGeom::from_fragment_geom(&geom).unwrap();
++        let r2 = b"BIOREAD";
++
++        // Every legal diversity-offset width must yield the same cell label.
++        for offset in [b"".as_slice(), b"G", b"GG", b"GGT"] {
++            let r1 = bd_read1(offset, b"AAAAAAAAA", b"CCCCCCCCC", b"TTTTTTTTT", b"GGGGTTTT");
++            let seqs = compiled.extract(&r1, r2);
++            let bc = &seqs.barcodes[0];
++            assert_eq!(bc.pieces().len(), 3);
++            assert_eq!(bc.len(), 27);
++            assert!(bc.as_contiguous().is_none());
++
++            let mut buf = SmallVec::new();
++            assert_eq!(bc.assemble_into(&mut buf), b"AAAAAAAAACCCCCCCCCTTTTTTTTT");
++            assert_eq!(seqs.umi, Some(b"GGGGTTTT".as_slice()));
++        }
++    }
++
++    #[test]
++    fn split_barcode_keeps_cells_distinct_across_every_block() {
++        let geom = parse_geometry(BD_RHAPSODY_V2).unwrap();
++        let compiled = CompiledGeom::from_fragment_geom(&geom).unwrap();
++        let r2 = b"BIOREAD";
++
++        let assemble = |r1: &[u8]| {
++            let seqs = compiled.extract(r1, r2);
++            let mut buf = SmallVec::new();
++            seqs.barcodes[0].assemble_into(&mut buf).to_vec()
++        };
++
++        let base = assemble(&bd_read1(
++            b"GG",
++            b"AAAAAAAAA",
++            b"CCCCCCCCC",
++            b"TTTTTTTTT",
++            b"GGGGTTTT",
++        ));
++        // A change in any block must change the assembled barcode. Before
++        // pieces were concatenated only the last block survived, so cells
++        // differing in block 1 or 2 silently collapsed into one barcode.
++        let vary_first = assemble(&bd_read1(
++            b"GG",
++            b"GGGGGGGGG",
++            b"CCCCCCCCC",
++            b"TTTTTTTTT",
++            b"GGGGTTTT",
++        ));
++        let vary_second = assemble(&bd_read1(
++            b"GG",
++            b"AAAAAAAAA",
++            b"GGGGGGGGG",
++            b"TTTTTTTTT",
++            b"GGGGTTTT",
++        ));
++        assert_ne!(base, vary_first);
++        assert_ne!(base, vary_second);
++        assert_ne!(vary_first, vary_second);
++    }
++
++    #[test]
++    fn single_piece_barcode_stays_zero_copy() {
++        let geom = parse_geometry("1{b[16]u[12]x:}2{r:}").unwrap();
++        let compiled = CompiledGeom::from_fragment_geom(&geom).unwrap();
++        let r1 = b"ACGTACGTACGTACGTAAAAAAAAAAAAtail";
++        let seqs = compiled.extract(r1, b"BIOREAD");
++        let contiguous = seqs.barcodes[0].as_contiguous().expect("one piece");
++        assert_eq!(contiguous, b"ACGTACGTACGTACGT");
++        // Borrowed straight out of the read rather than copied.
++        assert_eq!(contiguous.as_ptr(), r1.as_ptr());
++    }
+ }
+diff --git a/src/lib.rs b/src/lib.rs
+index 6233f8a..22ab8ca 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -97,8 +97,8 @@ pub mod types;
+ 
+ // Re-export key types at crate root
+ pub use extract::{
+-    BoundaryResolvedExtractor, CompiledGeom, ExtractedSeqs, GeomMeta, InferableExtractor,
+-    NormalizationMeta, SimpleExtractor,
++    BarcodeSeq, BoundaryResolvedExtractor, CompiledGeom, ExtractedSeqs, GeomMeta,
++    InferableExtractor, NormalizationMeta, SimpleExtractor,
+ };
+ pub use parse::{format_errors, geometry_complexity, parse_geometry, validate_geometry};
+ pub use types::*;
+diff --git a/src/parse.rs b/src/parse.rs
+index 572fa9c..93e41f6 100644
+--- a/src/parse.rs
++++ b/src/parse.rs
+@@ -242,6 +242,8 @@ pub fn validate_geometry(geom: &FragmentGeom) -> Result<(), String> {
+         }
+     }
+ 
++    validate_barcode_levels(&all_parts)?;
++
+     for read in [&geom.read1, &geom.read2] {
+         match classify_read_complexity(read) {
+             GeometryComplexity::FixedOffsets => {}
+@@ -253,6 +255,92 @@ pub fn validate_geometry(geom: &FragmentGeom) -> Result<(), String> {
+     Ok(())
+ }
+ 
++/// Number of distinct barcode levels addressable by the `bN[..]` syntax.
++const NUM_ADDRESSABLE_LEVELS: usize = 10;
++
++/// Validate the barcode levels, including levels assembled from several pieces.
++///
++/// A split-barcode chemistry contributes more than one tag to the same level
++/// (e.g. `b[9]f[GTGA]b[9]f[GACA]b[9]`, one 27bp cell label in three pieces).
++/// The pieces are concatenated in read order, so the constraints apply to the
++/// assembled barcode rather than to any individual piece.
++fn validate_barcode_levels(all_parts: &[&GeoPart]) -> Result<(), String> {
++    let has_sample = all_parts
++        .iter()
++        .any(|p| matches!(p.tag, GeoTagType::SampleBarcode));
++    let has_plain_bc = all_parts
++        .iter()
++        .any(|p| matches!(p.tag, GeoTagType::Barcode));
++    // Mirrors the level assignment the extractor uses: `s` is always level 0,
++    // so a plain `b` alongside it becomes level 1.
++    let plain_bc_level = if has_sample && has_plain_bc { 1u8 } else { 0u8 };
++
++    let mut widths = [0usize; NUM_ADDRESSABLE_LEVELS];
++    let mut piece_counts = [0usize; NUM_ADDRESSABLE_LEVELS];
++    let mut variable_counts = [0usize; NUM_ADDRESSABLE_LEVELS];
++
++    for part in all_parts {
++        let level = match part.tag {
++            GeoTagType::SampleBarcode => 0,
++            GeoTagType::Barcode => plain_bc_level,
++            GeoTagType::NumberedBarcode(n) => n,
++            _ => continue,
++        } as usize;
++        if level >= NUM_ADDRESSABLE_LEVELS {
++            return Err(format!(
++                "barcode level {} exceeds the maximum addressable level {}",
++                level,
++                NUM_ADDRESSABLE_LEVELS - 1
++            ));
++        }
++
++        let width = match part.len {
++            GeoLen::Fixed(n) => n as usize,
++            GeoLen::Range(_, max) => max as usize,
++            GeoLen::Unbounded => {
++                return Err(format!(
++                    "barcode level {} cannot be unbounded; give it a fixed or ranged width",
++                    level
++                ))
++            }
++        };
++
++        widths[level] += width;
++        piece_counts[level] += 1;
++        if matches!(part.len, GeoLen::Range(_, _)) {
++            variable_counts[level] += 1;
++        }
++    }
++
++    for level in 0..NUM_ADDRESSABLE_LEVELS {
++        if piece_counts[level] == 0 {
++            continue;
++        }
++        if piece_counts[level] > MAX_BC_PIECES {
++            return Err(format!(
++                "barcode level {} is split across {} pieces, but at most {} are supported",
++                level, piece_counts[level], MAX_BC_PIECES
++            ));
++        }
++        if widths[level] > MAX_BC_TOTAL_LEN {
++            return Err(format!(
++                "barcode level {} totals {} bases, but at most {} are supported",
++                level, widths[level], MAX_BC_TOTAL_LEN
++            ));
++        }
++        // Padding a variable-length barcode encodes the captured length in a
++        // suffix, which is only invertible when one piece can vary.
++        if variable_counts[level] > 1 {
++            return Err(format!(
++                "barcode level {} has {} variable-length pieces, but at most one is supported",
++                level, variable_counts[level]
++            ));
++        }
++    }
++
++    Ok(())
++}
++
+ /// Classify the executor complexity tier required for a geometry.
+ ///
+ /// The classifier chooses the most complex tier required by either read:
+@@ -540,6 +628,48 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn validate_bd_rhapsody_split_barcode() {
++        let geom = parse_geometry("1{x[0-3]b[9]f[GTGA]b[9]f[GACA]b[9]u[8]}2{r:}").unwrap();
++        assert!(validate_geometry(&geom).is_ok());
++    }
++
++    #[test]
++    fn validate_split_barcode_too_wide_rejected() {
++        // 4 x 9 = 36 bases, past what 2-bit packing into a u64 can hold.
++        let geom = parse_geometry("1{b[9]f[GTGA]b[9]f[GTGA]b[9]f[GTGA]b[9]u[8]}2{r:}").unwrap();
++        let err = validate_geometry(&geom).unwrap_err();
++        assert!(err.contains("totals 36 bases"), "unexpected error: {err}");
++    }
++
++    #[test]
++    fn validate_split_barcode_too_many_pieces_rejected() {
++        let geom =
++            parse_geometry("1{b[4]f[GTGA]b[4]f[GTGA]b[4]f[GTGA]b[4]f[GTGA]b[4]u[8]}2{r:}").unwrap();
++        let err = validate_geometry(&geom).unwrap_err();
++        assert!(err.contains("split across 5 pieces"), "unexpected error: {err}");
++    }
++
++    #[test]
++    fn validate_split_barcode_two_variable_pieces_rejected() {
++        // Padding encodes the captured length in a suffix, so only one piece
++        // of a level may vary or the padding is not invertible.
++        let geom = parse_geometry("1{b[8-9]f[GTGA]b[8-9]f[GACA]b[9]u[8]}2{r:}").unwrap();
++        let err = validate_geometry(&geom).unwrap_err();
++        assert!(
++            err.contains("variable-length pieces"),
++            "unexpected error: {err}"
++        );
++    }
++
++    #[test]
++    fn validate_split_barcode_levels_counted_separately() {
++        // A sample barcode and a split cell barcode are independent levels;
++        // the cell level's three pieces must not spill into the sample level.
++        let geom = parse_geometry("1{s[8]b[9]f[GTGA]b[9]f[GACA]b[9]u[8]}2{r:}").unwrap();
++        assert!(validate_geometry(&geom).is_ok());
++    }
++
+     #[test]
+     fn classify_fixed_vs_variable_complexity() {
+         let fixed = parse_geometry("1{b[16]u[12]x:}2{r:}").unwrap();
+diff --git a/src/types.rs b/src/types.rs
+index 1625b37..0c04cc2 100644
+--- a/src/types.rs
++++ b/src/types.rs
+@@ -5,6 +5,20 @@ use smallvec::SmallVec;
+ /// Maximum number of barcode levels that can be stored inline (no heap allocation).
+ pub const MAX_INLINE_BARCODES: usize = 4;
+ 
++/// Maximum number of physically separate pieces a single barcode level may be
++/// split across.
++///
++/// Split-barcode chemistries interleave the blocks of one logical barcode with
++/// linker sequence, e.g. BD Rhapsody Enhanced Bead V2:
++/// `b[9]f[GTGA]b[9]f[GACA]b[9]`, which is three pieces of one 27bp cell label.
++pub const MAX_BC_PIECES: usize = 4;
++
++/// Maximum total width, in bases, of a single barcode level.
++///
++/// Downstream consumers pack a barcode into a `u64` at 2 bits per base, so a
++/// level wider than this cannot be represented.
++pub const MAX_BC_TOTAL_LEN: usize = 32;
++
+ /// The type/role of a geometry tag.
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub enum GeoTagType {

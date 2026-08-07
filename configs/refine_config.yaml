@@ -1,0 +1,185 @@
+# yaml-language-server: $schema=./schemas/refine_config.schema.json
+#
+# Stage 3 -- refinement. Turns one reviewed decision file per marker method into
+# seed labels, trains scVI then scANVI on them, and writes a label-aware
+# embedding plus the evidence for every call.
+#
+# The six methods are six independent runs over the same cells. That is the
+# whole point: they differ in how genesets are *found*, and everything
+# downstream of that (scoring, seeding, propagation) is held identical so a
+# difference in the final annotation is attributable to geneset discovery and
+# nothing else.
+#
+# Prerequisite: stage 1 must have run and a human must have reviewed
+# {annotation_dir}/{sample}/{method}/{sample}_decisions.tsv. A blank
+# chosen_po_id accepts the automatic top call, so an unreviewed file is a
+# legitimate (if unconsidered) input rather than an error.
+
+RefineConfigs:
+
+  # Stage 1 output root. Each (sample, method) contributes three files from
+  # here: _decisions.tsv, _geneset_scores.tsv and _significant_annotations.tsv.
+  annotation_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/annotation
+  output_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/refine
+  log_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/logs
+
+  # Read only to render PO ids as readable names in .obs. The labels scANVI
+  # trains on stay ids, so two genesets resolving to the same term merge into
+  # one class -- which is intended; two modules describing root hair cells are
+  # one cell type.
+  ontology_file: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/annotation/po_final.obo
+
+  # Match annotation_config's ontology_extensions, so a group the reviewer named
+  # with a grafted id (a NODULE: nodule cell type) is shown by name in .obs
+  # rather than as the bare id. Relative paths resolve next to ontology_file.
+  ontology_extensions:
+    - nodule.obo
+
+  targets:
+    # Was MtTip_noHVG, pointing at results/integration/scVI/MtTip_noHVG/ -- a
+    # path that no longer exists now that integration writes under
+    # results/integration/JointEmbeddingSCVI/. Renamed to match: refine.py
+    # uses this dict key as `sample` for annotation_dir/{sample}/, so it must
+    # equal the directory annotation actually wrote (results/annotation/
+    # results/MtTip/), not the old scVI-stage name.
+    MtTip_DRVI_full_fixed:
+      adata: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/DRVI/MtTip_DRVI_full_fixed/MtTip_DRVI_full_fixed.h5ad
+      batch_key: sample
+      counts_layer: corrected_counts
+      covariates:
+        - corrected_counts_total_counts
+        - mitochondrial_fraction_corrected_counts
+        - ribosomal_rna_fraction_corrected_counts
+      methods: [wilcoxon, t-test, cosg, hotspot, lmd, cfmf]
+
+    MtTipInduced_DRVI_full_fixed:
+      adata: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/DRVI/MtTipInduced_DRVI_full_fixed/MtTipInduced_DRVI_full_fixed.h5ad
+      # THE MAPPING FORM DOES NOT WORK HERE, and does not need to. This target's
+      # DRVI fit was trained on a mapped batch key:
+      #
+      #     batch_key:
+      #       tip: 'sample'
+      #       induced_all: ['tech', 'prep']
+      #
+      # but `batch_key` in THIS file is a plain .obs column name -- refine.py
+      # reads `self.adata.obs[self.batch_key]` directly and has no mapping
+      # resolver, so a dict here fails (or, worse, tests falsy and trains
+      # uncorrected).
+      #
+      # The integration already MATERIALISED that mapping into the AnnData it
+      # wrote: orchestrator._apply_batch_key resolves the spec per cell and
+      # stores the result as `batch_mixed`, which is saved in the h5ad.
+      # Verified on this file -- 12 categories: `sample=p1` ...
+      # `sample=BDTip10mm` for the nine tip samples, and
+      # `tech=10xv3+prep=2h_only`, `tech=bd_rhapsody+prep=1h_2h_mix`,
+      # `tech=bd_rhapsody+prep=2h_only` for the induced cohort.
+      #
+      # So this does not imitate the fit's batch structure, it reuses the exact
+      # per-cell assignment the fit was trained on. Re-deriving the mapping here
+      # would be a second implementation of the same rule -- and the group
+      # definitions it needs (`tip`, `induced_all`) live in
+      # integration_config.yaml, not in this file -- free to drift from the
+      # first with nothing detecting it.
+      #
+      # `sample`, which this said until 2026-08-05, was wrong for this target:
+      # it corrects the induced cohort per-sample across 26 samples instead of
+      # on the 12-way platform/prep structure the latent space was built with.
+      batch_key: batch_mixed
+      counts_layer: corrected_counts
+      covariates:
+        - corrected_counts_total_counts
+        - mitochondrial_fraction_corrected_counts
+        - ribosomal_rna_fraction_corrected_counts
+      methods: [wilcoxon, t-test, cosg, hotspot, lmd, cfmf]
+
+
+      
+
+
+  # ---------------------------------------------------------------------------
+  # Seeding. Uniform for every method, deliberately: a cluster-dependent method
+  # is NOT labelled cluster-wide. That stops the leiden partition being baked
+  # into the answer and keeps the comparison between methods about geneset
+  # discovery rather than about geneset discovery *and* label assignment at
+  # once.
+  #
+  # The rule runs at GROUP level, not geneset level:
+  #
+  #   per method:  group score = max z over that group's member genesets
+  #                assignment  = argmax over GROUPS, if it beats the runner-up
+  #                              group by `margin`
+  #                seeds       = top `quantile` of the assigned cells
+  #   across:      a cell's label is the group most methods seeded it for;
+  #                a tie is a disagreement and stays Unassigned
+  #
+  # Exclusivity has to stay and has to be at group level. Dropping it was
+  # measured and is unusable -- scoring each geneset's own top decile
+  # independently makes 88% of the dataset a seed for something, with a typical
+  # cell "supporting" four correlated hotspot modules. Keeping it at *geneset*
+  # level is what the old per-method path did, and it discarded 3,316 wilcoxon
+  # cells for being torn between clusters 3 and 4 after the reviewer had
+  # already declared both to be root hair cells.
+  # ---------------------------------------------------------------------------
+  seeds:
+    # PLACEHOLDERS. At geneset level these seeded ~7.5% of cells; at group
+    # level the number moves and has not been tuned. Seeds are meant to be a
+    # confident minority -- scANVI propagates from them -- but that has never
+    # been tested against propagation quality. If whole classes come back with
+    # poor confidence, loosen these before touching the safeguards.
+    quantile: 0.9
+    margin: 0.25
+    # A class scANVI cannot learn from is worse than no class: it becomes an
+    # attractor with no coherent centre. Returned to Unassigned below this.
+    # Guess; scANVI's real floor is unknown.
+    min_seed_cells: 10
+
+  # ---------------------------------------------------------------------------
+  # Post-prediction checks. Neither invents a missing class -- that is what the
+  # unknown_<geneset> classes do. These catch what slips past them.
+  # ---------------------------------------------------------------------------
+  safeguards:
+    # PLACEHOLDER, and the most important one to fix. This was set against a
+    # nearest-centroid softmax stand-in, which is far flatter than a real
+    # scANVI posterior; 0.8 may demote most of the dataset or nothing at all.
+    # The first successful run writes a posterior histogram to the report --
+    # read it and set this from the data.
+    min_confidence: 0.8
+    # MEASURED, on five held-out classes: catches 50.3% of orphaned cells for
+    # 0.7% false positives. Orphan median ratio 1.25 vs 0.65 for true seeds.
+    # Do not change without redoing that hold-out.
+    max_novelty_ratio: 1.25
+    reference_quantile: 0.95
+
+  model:
+    # Off until step 5. When switched on, tune_metric selects the scib tuner
+    # (scvi-tools dispatches on the metric *name*) and the mode flips to max --
+    # scib scores are better when higher, unlike elbo_validation.
+    tune: false
+    n_trials: 30
+    tune_metric: Total
+    max_epochs: 400
+    # Empty means scvi's own constructor defaults, which is honestly "not
+    # specified here" rather than a set of numbers we can name.
+    model_params: {}
+    scanvi_params: {}
+    scanvi_max_epochs: 100
+    # scANVI oversamples labelled cells to this many per label per epoch.
+    # Matters here: seeds are ~7.5% of cells, so without it the classifier sees
+    # almost nothing but unlabelled data.
+    n_samples_per_label: 100
+
+  embedding:
+    # Null lets DimReducer pick sqrt(N), which on 62,750 cells is ~250 --
+    # far too many. Set explicitly.
+    n_neighbors: Null
+    metric: correlation
+    min_dist: 0.0
+    leiden_resolution: 0.5
+    random_state: 42
+
+  report:
+    # No real list exists yet. These four are placeholders purely to exercise
+    # the mechanism -- treat the resulting panels as a UI test, not biology,
+    # until a curated marker list replaces them.
+    genes: []
+    max_points: 60000

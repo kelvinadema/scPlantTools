@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Chemistry definitions",
+  "type": "object",
+  "properties": {
+    "technologies": {
+      "type": "object",
+      "description": "technologies.<tech>.<mapper> -> settings.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "description": "Per-mapper settings for one chemistry. Merged into the sample entry, sample wins.",
+          "properties": {
+            "chemistry": {
+              "type": "string",
+              "description": "alevin geometry string."
+            },
+            "x_flag": {
+              "type": "string",
+              "description": "kb -x technology flag."
+            },
+            "solo_type": {
+              "type": "string",
+              "description": "STARsolo --soloType."
+            },
+            "soloCBwhitelist": {
+              "type": "string",
+              "description": "STARsolo whitelist path(s)."
+            },
+            "unsupported": {
+              "type": "boolean",
+              "description": "Set true to reject this mapper/chemistry pair."
+            },
+            "extra_mapping_args": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "technologies"
+  ],
+  "additionalProperties": false
+}

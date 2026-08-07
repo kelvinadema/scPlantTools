@@ -1,0 +1,17 @@
+# Conda env for the external-data fetch stage (fetch_scripts/).
+# Deliberately tiny and separate from the mapping/integration/annotation
+# stacks: it only needs the SRA toolkit, a parallel gzip, and pyyaml. HTTP is
+# done with the Python standard library, so no `requests` is required.
+#
+#   conda env create -f envs/scFetch.yml     # or `mamba env create -f ...`
+#   conda activate scFetch
+name: scFetch
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - sra-tools>=3.0      # prefetch, fasterq-dump (10x needs --include-technical)
+  - pigz                # parallel gzip for fasterq-dump output
+  - pyyaml              # emits the sample-sheet fragment
+  - curl                # resumable ENA FASTQ transfers

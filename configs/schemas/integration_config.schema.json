@@ -1,0 +1,391 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Integration targets",
+  "type": "object",
+  "properties": {
+    "extends": {
+      "type": "string",
+      "description": "Treat this file as an OVERLAY on the config at this path. The base supplies `groups:`, `defaults:` and the site paths; this file adds targets. `${VAR}` is expanded from the environment and a relative path resolves against this file's own directory. A group or target name defined in both files is an error, not an override. Used by the thesis chapters in the notebooks repo, which own their targets without owning a copy of the cohort definitions."
+    },
+    "IntegrateConfigs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "description": "One integration target. Any key omitted falls back to the top-level `defaults:` block. Sample lists may name a group from `groups:` instead of listing samples.",
+        "properties": {
+          "method": {
+            "type": "string",
+            "description": "scVI trains a new model; scArches maps a query onto a reference model; contrastiveVI fits one Background-vs-Target contrast. scANVI is not selectable here -- it is a refinement applied on top of a trained scVI model. DRVI is not a method: it is a model_class on the scVI path, since it subclasses SCVI.",
+            "enum": [
+              "scVI",
+              "scArches",
+              "contrastiveVI"
+            ]
+          },
+          "Samples": {
+            "type": [
+              "array",
+              "string"
+            ],
+            "description": "scVI targets. A group name, or a list of sample/group names.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "Reference": {
+            "type": [
+              "array",
+              "string"
+            ],
+            "description": "scArches targets: samples the reference model was trained on.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "Query": {
+            "type": [
+              "array",
+              "string"
+            ],
+            "description": "scArches targets: samples to map onto the reference.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "Reference_model": {
+            "type": "string",
+            "description": "Name of the scVI target whose trained model to map onto."
+          },
+          "Background": {
+            "type": [
+              "array",
+              "string"
+            ],
+            "description": "contrastiveVI targets: the control samples defining shared variation. Their salient latent is fixed at 0 in the generative model. Must be disjoint from Target.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "Target": {
+            "type": [
+              "array",
+              "string"
+            ],
+            "description": "contrastiveVI targets: the perturbed samples whose target-specific variation the salient latent should isolate. Must be disjoint from Background.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "covariates": {
+            "type": [
+              "array",
+              "string"
+            ],
+            "description": ".obs columns passed to scVI as continuous covariates. A name that is not present in .obs is silently dropped at integrate.py:79 and the model trains without it -- validate.py checks these.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "batch_key": {
+            "type": [
+              "string",
+              "array",
+              "object"
+            ],
+            "description": "The .obs column scVI corrects on. Unstated means 'batch' (the sample sheet's own batch string, backfilled by resolve_batch); an explicit null trains with no batch correction at all. Stated here rather than assumed because `batch` is one-to-one with condition on a treated cohort, where correcting on it deletes the effect being measured. `tech` (10xv3/bd_rhapsody) is the useful alternative wherever platform is crossed with condition rather than confounded with it. validate.py checks the column exists. THREE FORMS beyond the plain string, all resolved by shared/targets.py::parse_batch_key and materialised onto .obs by orchestrator._apply_batch_key: a LIST ([\"tech\",\"prep\"]) derives one column whose levels are the joined values, for when two nuisance variables are each crossed with condition but neither alone identifies the grouping; a MAPPING ({tip: sample, induced_all: [tech, prep]}) applies different keys to different parts of the cohort, for joint reference+query fits where per-sample correction is right on the untreated reference and ruinous on the treated query; and null. Every key named in any form faces the same checks a lone batch_key does -- pairing `treatment` with a legal key does not make it legal."
+          },
+          "sweep": {
+            "type": "boolean",
+            "description": "contrastiveVI only. Choose `wasserstein_penalty` and `n_salient_latent` by fitting a grid of DISPOSABLE models and ranking them, then train the winner as this target's real model. This is what `tune: true` would be if it worked here -- it does not, because contrastiveVI's objective has no term rewarding salient/background separation, so elbo_validation selects maximum salient capacity and zero penalty (the leak). Every criterion the sweep ranks on is computed outside the objective: separation, identity leakage measured on BACKGROUND cells (which received no perturbation, so any structure there is leakage by construction), and salient effective dimensionality, which catches the opposite degeneracy where a too-large penalty collapses the salient space into two blobs. The full grid is written to {target}_contrast_grid.tsv and the chosen point recorded in the registry, so an automatic selection stays auditable."
+          },
+          "sweep_grid": {
+            "type": "object",
+            "description": "Optional axes for `sweep`, e.g. {wasserstein_penalty: [0, 0.1, 0.5], n_salient_latent: [10]}. Unstated uses integration/cvi_sweep.py's defaults, which after the 2026-08-03 CH5 sweep are a FINE LADDER UNDER 1 (0, 0.05, 0.1, 0.25, 0.5, 1): every penalty >= 1 collapsed the salient space on all five contrasts, while 0 leaked cell identity, and the transition between the two is a step rather than a slope."
+          },
+          "keep_layers": {
+            "type": [
+              "array",
+              "string"
+            ],
+            "description": "Count layers to carry into the concatenated target; everything else is dropped per sample before ad.concat. Unstated keeps all eight the mapping stage writes, which means nine same-shape sparse matrices (with X) held in RAM and written to disk while the model reads one -- the usual cause of an OOM on a large cohort. ['corrected_counts'] is the safe minimum: it is what integrate/contrastive read and what every annotation and refine config names as counts_layer. Mapping artifacts are not modified, so a dropped layer can always be re-derived from them.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "min_cells": {
+            "type": "integer",
+            "description": "Drop genes detected in fewer than this many cells, applied ONCE to the concatenated target (orchestrator._concatenate_adata) and so to every method. Unset means no gene filtering -- the historical behaviour, and the default precisely because this runs for every target: a value here would change the input to every existing fit. Counted on the layer the model trains on (keep_layers[0], normally corrected_counts), not on .X, since those differ after ad.concat. Exists for the do_hvg: False case, where nothing else filters genes at all -- the min_cells=10 in hvg.py's initialize_views lives INSIDE HVGSelector and is skipped along with the selection. On a 265k-cell cohort a floor of 10 is 0.004% of cells: it removes genes carrying no information rather than genes carrying rare-population signal, which is what makes it a safe substitute for a variance ranking."
+          },
+          "do_hvg": {
+            "type": "boolean",
+            "description": "Run the 8-method HVG consensus before training. Default False. Note the gene floor that runs with it is HVGSelector-internal, so turning this off removes it too -- see min_cells."
+          },
+          "tune": {
+            "type": "boolean",
+            "description": "Ray/hyperopt autotuning instead of fixed model_params. Default False; the top-level `defaults:` block in this file currently turns it on. Refused on a contrastiveVI target -- see validate.py for why the ELBO is the wrong selection criterion there."
+          },
+          "early_stopping": {
+            "type": "boolean",
+            "description": "Stop training when the validation ELBO stops improving. Passed to model.train(). Distinct from `tune`: this is a convergence criterion within one fixed architecture, which is a sound use of elbo_validation even where searching over architectures on it is not."
+          },
+          "model_class": {
+            "type": "string",
+            "description": "scVI variant to train. Also names the output folder under results/integration/. Default SCVI.",
+            "enum": [
+              "SCVI",
+              "JointEmbeddingSCVI",
+              "DRVI"
+            ]
+          },
+          "n_trials": {
+            "type": "integer",
+            "description": "Autotune trial budget. Only read when tune is on."
+          },
+          "search_space": {
+            "type": "object",
+            "description": "Override the autotune search space, merged PER KEY over this model_class's built-in default (integrate.py's _SEARCH_SPACE_DEFAULTS, one per SCVI/JointEmbeddingSCVI/DRVI). State only what differs. Values: a LIST becomes tune.choice over it, so a 1-element list pins a parameter; a single-key mapping like {loguniform: [1.0e-4, 1.0e-2]} becomes that ray sampler; null drops the key entirely, leaving scvi's own constructor default and not naming it at all. Only read when tune is on -- with tune off the parameters come from model_params. Keys are not checked against the model constructor, so a name the model does not accept fails at the first trial, not here."
+          },
+          "tune_metric": {
+            "type": "string",
+            "description": "Metric the tuner selects on. Default elbo_validation. A scib metric name selects the scib tuner instead."
+          },
+          "tune_mode": {
+            "type": "string",
+            "description": "Optimisation direction. Derived from tune_metric when unset (min for elbo_validation, max otherwise) -- setting it wrong is silent, and min on a scib score selects the WORST trial.",
+            "enum": [
+              "min",
+              "max"
+            ]
+          },
+          "max_epochs": {
+            "type": "integer",
+            "description": "Total training epochs, applied to BOTH the autotune trials and the final fit so the tuner selects in the regime the chosen model is trained in. Unset means scvi's own cell-count heuristic (min(round(20000/n_obs*400), 400)) -- ~123 at 65k cells. KL warmup is now scaled to half the effective max_epochs (and any longer n_epochs_kl_warmup clamped down) so warmup always completes, so this no longer has to be hand-tuned against warmup (scvi-tools #507)."
+          },
+          "check_val_every_n_epoch": {
+            "type": "integer",
+            "description": "Log validation metrics every N epochs on the FINAL fit (tuning already logs them for its metric). Set to 1 to get *_validation loss curves in model.history and see the train/val gap. scvi holds out train_size=0.9 by default but logs nothing without this."
+          },
+          "plan_kwargs": {
+            "type": "object",
+            "description": "Passed to model.train(plan_kwargs=...) on both tuning trials and the final fit. Home for the KL-warmup control -- n_epochs_kl_warmup (epoch-based) or n_steps_kl_warmup (iteration-based, preferred for large datasets per scvi-tools #507) -- and any other TrainingPlan arg. `lr` is added to the search space automatically when tuning, so set it here only to pin it. n_epochs_kl_warmup is auto-scaled to half the effective max_epochs and clamped down if set longer, so it need not be kept below max_epochs by hand."
+          },
+          "model_params": {
+            "type": "object",
+            "description": "Passed to the scVI constructor when tune is off. Nested one level: `model_params: {model_params: {n_latent: 20, ...}}`, matching the tuner's search-space shape. Empty means scvi's own defaults."
+          },
+          "hvg_path": {
+            "type": "string",
+            "description": "scArches targets: gene list the reference model was trained on. Normally written by the reference run, not set by hand."
+          },
+          "artifact_key": {
+            "type": "string",
+            "description": "Which mapping artifact this target integrates. Overrides the file-level artifact_key; see that key for the values."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Applied to every target. Exactly equivalent to writing each key on every target; a target that states the key wins. The merge is shallow, which is why every model key above is flat rather than nested under a `model:` block.",
+      "properties": {
+        "method": {
+          "type": "string",
+          "description": "scVI trains a new model; scArches maps a query onto a reference model; contrastiveVI fits one Background-vs-Target contrast. scANVI is not selectable here -- it is a refinement applied on top of a trained scVI model. DRVI is not a method: it is a model_class on the scVI path, since it subclasses SCVI.",
+          "enum": [
+            "scVI",
+            "scArches",
+            "contrastiveVI"
+          ]
+        },
+        "Samples": {
+          "type": [
+            "array",
+            "string"
+          ],
+          "description": "scVI targets. A group name, or a list of sample/group names.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "Reference": {
+          "type": [
+            "array",
+            "string"
+          ],
+          "description": "scArches targets: samples the reference model was trained on.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "Query": {
+          "type": [
+            "array",
+            "string"
+          ],
+          "description": "scArches targets: samples to map onto the reference.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "Reference_model": {
+          "type": "string",
+          "description": "Name of the scVI target whose trained model to map onto."
+        },
+        "Background": {
+          "type": [
+            "array",
+            "string"
+          ],
+          "description": "contrastiveVI targets: the control samples defining shared variation. Their salient latent is fixed at 0 in the generative model. Must be disjoint from Target.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "Target": {
+          "type": [
+            "array",
+            "string"
+          ],
+          "description": "contrastiveVI targets: the perturbed samples whose target-specific variation the salient latent should isolate. Must be disjoint from Background.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "covariates": {
+          "type": [
+            "array",
+            "string"
+          ],
+          "description": ".obs columns passed to scVI as continuous covariates. A name that is not present in .obs is silently dropped at integrate.py:79 and the model trains without it -- validate.py checks these.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "batch_key": {
+          "type": [
+            "string",
+            "array",
+            "object"
+          ],
+          "description": "The .obs column scVI corrects on. Unstated means 'batch' (the sample sheet's own batch string, backfilled by resolve_batch); an explicit null trains with no batch correction at all. Stated here rather than assumed because `batch` is one-to-one with condition on a treated cohort, where correcting on it deletes the effect being measured. `tech` (10xv3/bd_rhapsody) is the useful alternative wherever platform is crossed with condition rather than confounded with it. validate.py checks the column exists. THREE FORMS beyond the plain string, all resolved by shared/targets.py::parse_batch_key and materialised onto .obs by orchestrator._apply_batch_key: a LIST ([\"tech\",\"prep\"]) derives one column whose levels are the joined values, for when two nuisance variables are each crossed with condition but neither alone identifies the grouping; a MAPPING ({tip: sample, induced_all: [tech, prep]}) applies different keys to different parts of the cohort, for joint reference+query fits where per-sample correction is right on the untreated reference and ruinous on the treated query; and null. Every key named in any form faces the same checks a lone batch_key does -- pairing `treatment` with a legal key does not make it legal."
+        },
+        "sweep": {
+          "type": "boolean",
+          "description": "contrastiveVI only. Choose `wasserstein_penalty` and `n_salient_latent` by fitting a grid of DISPOSABLE models and ranking them, then train the winner as this target's real model. This is what `tune: true` would be if it worked here -- it does not, because contrastiveVI's objective has no term rewarding salient/background separation, so elbo_validation selects maximum salient capacity and zero penalty (the leak). Every criterion the sweep ranks on is computed outside the objective: separation, identity leakage measured on BACKGROUND cells (which received no perturbation, so any structure there is leakage by construction), and salient effective dimensionality, which catches the opposite degeneracy where a too-large penalty collapses the salient space into two blobs. The full grid is written to {target}_contrast_grid.tsv and the chosen point recorded in the registry, so an automatic selection stays auditable."
+        },
+        "sweep_grid": {
+          "type": "object",
+          "description": "Optional axes for `sweep`, e.g. {wasserstein_penalty: [0, 0.1, 0.5], n_salient_latent: [10]}. Unstated uses integration/cvi_sweep.py's defaults, which after the 2026-08-03 CH5 sweep are a FINE LADDER UNDER 1 (0, 0.05, 0.1, 0.25, 0.5, 1): every penalty >= 1 collapsed the salient space on all five contrasts, while 0 leaked cell identity, and the transition between the two is a step rather than a slope."
+        },
+        "keep_layers": {
+          "type": [
+            "array",
+            "string"
+          ],
+          "description": "Count layers to carry into the concatenated target; everything else is dropped per sample before ad.concat. Unstated keeps all eight the mapping stage writes, which means nine same-shape sparse matrices (with X) held in RAM and written to disk while the model reads one -- the usual cause of an OOM on a large cohort. ['corrected_counts'] is the safe minimum: it is what integrate/contrastive read and what every annotation and refine config names as counts_layer. Mapping artifacts are not modified, so a dropped layer can always be re-derived from them.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "min_cells": {
+          "type": "integer",
+          "description": "Drop genes detected in fewer than this many cells, applied ONCE to the concatenated target (orchestrator._concatenate_adata) and so to every method. Unset means no gene filtering -- the historical behaviour, and the default precisely because this runs for every target: a value here would change the input to every existing fit. Counted on the layer the model trains on (keep_layers[0], normally corrected_counts), not on .X, since those differ after ad.concat. Exists for the do_hvg: False case, where nothing else filters genes at all -- the min_cells=10 in hvg.py's initialize_views lives INSIDE HVGSelector and is skipped along with the selection. On a 265k-cell cohort a floor of 10 is 0.004% of cells: it removes genes carrying no information rather than genes carrying rare-population signal, which is what makes it a safe substitute for a variance ranking."
+        },
+        "do_hvg": {
+          "type": "boolean",
+          "description": "Run the 8-method HVG consensus before training. Default False. Note the gene floor that runs with it is HVGSelector-internal, so turning this off removes it too -- see min_cells."
+        },
+        "tune": {
+          "type": "boolean",
+          "description": "Ray/hyperopt autotuning instead of fixed model_params. Default False; the top-level `defaults:` block in this file currently turns it on. Refused on a contrastiveVI target -- see validate.py for why the ELBO is the wrong selection criterion there."
+        },
+        "early_stopping": {
+          "type": "boolean",
+          "description": "Stop training when the validation ELBO stops improving. Passed to model.train(). Distinct from `tune`: this is a convergence criterion within one fixed architecture, which is a sound use of elbo_validation even where searching over architectures on it is not."
+        },
+        "model_class": {
+          "type": "string",
+          "description": "scVI variant to train. Also names the output folder under results/integration/. Default SCVI.",
+          "enum": [
+            "SCVI",
+            "JointEmbeddingSCVI",
+            "DRVI"
+          ]
+        },
+        "n_trials": {
+          "type": "integer",
+          "description": "Autotune trial budget. Only read when tune is on."
+        },
+        "search_space": {
+          "type": "object",
+          "description": "Override the autotune search space, merged PER KEY over this model_class's built-in default (integrate.py's _SEARCH_SPACE_DEFAULTS, one per SCVI/JointEmbeddingSCVI/DRVI). State only what differs. Values: a LIST becomes tune.choice over it, so a 1-element list pins a parameter; a single-key mapping like {loguniform: [1.0e-4, 1.0e-2]} becomes that ray sampler; null drops the key entirely, leaving scvi's own constructor default and not naming it at all. Only read when tune is on -- with tune off the parameters come from model_params. Keys are not checked against the model constructor, so a name the model does not accept fails at the first trial, not here."
+        },
+        "tune_metric": {
+          "type": "string",
+          "description": "Metric the tuner selects on. Default elbo_validation. A scib metric name selects the scib tuner instead."
+        },
+        "tune_mode": {
+          "type": "string",
+          "description": "Optimisation direction. Derived from tune_metric when unset (min for elbo_validation, max otherwise) -- setting it wrong is silent, and min on a scib score selects the WORST trial.",
+          "enum": [
+            "min",
+            "max"
+          ]
+        },
+        "max_epochs": {
+          "type": "integer",
+          "description": "Total training epochs, applied to BOTH the autotune trials and the final fit so the tuner selects in the regime the chosen model is trained in. Unset means scvi's own cell-count heuristic (min(round(20000/n_obs*400), 400)) -- ~123 at 65k cells. KL warmup is now scaled to half the effective max_epochs (and any longer n_epochs_kl_warmup clamped down) so warmup always completes, so this no longer has to be hand-tuned against warmup (scvi-tools #507)."
+        },
+        "check_val_every_n_epoch": {
+          "type": "integer",
+          "description": "Log validation metrics every N epochs on the FINAL fit (tuning already logs them for its metric). Set to 1 to get *_validation loss curves in model.history and see the train/val gap. scvi holds out train_size=0.9 by default but logs nothing without this."
+        },
+        "plan_kwargs": {
+          "type": "object",
+          "description": "Passed to model.train(plan_kwargs=...) on both tuning trials and the final fit. Home for the KL-warmup control -- n_epochs_kl_warmup (epoch-based) or n_steps_kl_warmup (iteration-based, preferred for large datasets per scvi-tools #507) -- and any other TrainingPlan arg. `lr` is added to the search space automatically when tuning, so set it here only to pin it. n_epochs_kl_warmup is auto-scaled to half the effective max_epochs and clamped down if set longer, so it need not be kept below max_epochs by hand."
+        },
+        "model_params": {
+          "type": "object",
+          "description": "Passed to the scVI constructor when tune is off. Nested one level: `model_params: {model_params: {n_latent: 20, ...}}`, matching the tuner's search-space shape. Empty means scvi's own defaults."
+        },
+        "hvg_path": {
+          "type": "string",
+          "description": "scArches targets: gene list the reference model was trained on. Normally written by the reference run, not set by hand."
+        },
+        "artifact_key": {
+          "type": "string",
+          "description": "Which mapping artifact this target integrates. Overrides the file-level artifact_key; see that key for the values."
+        }
+      },
+      "additionalProperties": false
+    },
+    "groups": {
+      "type": "object",
+      "description": "Named, reusable sample lists. Referenced by name from Samples/Reference/Query. Groups may reference other groups.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "input_dir": {
+      "type": "string",
+      "description": "Mapping stage output root; where manifests are read from. No default -- IntegrationManager raises without it (a site-specific path with no sensible fallback)."
+    },
+    "output_dir": {
+      "type": "string",
+      "description": "Same reasoning as input_dir: no default, must be set explicitly."
+    },
+    "artifact_key": {
+      "type": "string",
+      "description": "Which per-sample manifest artifact to integrate: \"filtered_h5ad\" (default, automatic QC) or \"filtered_manual_h5ad\" (hand-reviewed via mapping.refilter). Overridable with --artifact-key."
+    }
+  },
+  "required": [
+    "IntegrateConfigs",
+    "input_dir",
+    "output_dir"
+  ]
+}

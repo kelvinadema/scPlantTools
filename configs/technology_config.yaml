@@ -1,0 +1,73 @@
+# yaml-language-server: $schema=./schemas/technology_config.schema.json
+technologies:
+  10xv3:
+    alevin:
+      chemistry: '1{b[16]u[12]x:}2{r:}'
+      extra_mapping_args:
+        - '--unfiltered-pl'
+        -  '/lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Whitelists/10xv3Whitelist.txt'
+    kb:
+      x_flag: '10xv3'
+    starsolo:
+      solo_type: 'CB_UMI_Simple'
+      soloCBwhitelist: '/lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Whitelists/10xv3Whitelist.txt'
+      extra_mapping_args:
+       - 'soloCBmatchWLtype 1MM_multi_Nbase_pseudocounts'
+       - 'soloUMIlen 12'
+       - 'soloCBstart 1'
+       - 'soloCBlen 16'
+       - 'soloUMIstart 17'
+  10xv2:
+    alevin:
+      chemistry: '1{b[16]u[10]x:}2{r:}'
+      extra_mapping_args:
+        - '--unfiltered-pl'
+        - '/lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Whitelists/10xv2Whitelist.txt'
+    kb:
+      x_flag: '10xv2'
+    starsolo:
+      solo_type: 'CB_UMI_Simple'
+      soloCBwhitelist: '/lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Whitelists/10xv2Whitelist.txt'
+      extra_mapping_args:
+        - 'soloCBmatchWLtype 1MM_multi_Nbase_pseudocounts'
+        - 'soloUMIlen 10'
+        - 'soloCBstart 1'
+        - 'soloCBlen 16'
+        - 'soloUMIstart 17'
+  bd_rhapsody:
+    alevin:
+      # Stock piscem fails on this, see patched version
+      # batch_scripts/run_mapper.sh puts patched piscem on PATH and refuses
+      chemistry: '1{x[0-3]b[9]f[GTGA]b[9]f[GACA]b[9]u[8]}2{r:}'
+      extra_mapping_args:
+        # These 3 blocks are concatenated into the cartesian product, needed for AF
+        - '--unfiltered-pl'
+        - '/lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Whitelists/BD_CLS1.txt /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Whitelists/BD_CLS2.txt /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Whitelists/BD_CLS3.txt'
+    kb:
+      x_flag: 'WBTA'
+    starsolo:
+      solo_type: CB_UMI_Complex
+      soloCBwhitelist: '/lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Whitelists/BD_CLS1.txt /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Whitelists/BD_CLS2.txt /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Whitelists/BD_CLS3.txt'
+      extra_mapping_args:
+        - 'soloCBmatchWLtype EditDist_2'
+        - 'soloAdapterSequence NNNNNNNNNGTGANNNNNNNNNGACA'
+        - 'soloCBposition 2_0_2_8 2_13_2_21 3_1_3_9'
+        - 'soloUMIposition 3_10_3_17'
+  dnbelab_c4:
+    alevin:
+      chemistry: '1{b[20]u[10]x:}2{r:}'
+      extra_mapping_args:
+        - '--unfiltered-pl'
+        - '/lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Whitelists/DNBelabC4_merged.txt'
+    kb:
+      # KB cannot deal with this
+      unsupported: true
+    starsolo:
+      solo_type: 'CB_UMI_Simple'
+      soloCBwhitelist: '/lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/Whitelists/DNBelabC4_merged.txt'
+      extra_mapping_args:
+        - 'soloCBmatchWLtype 1MM_multi_Nbase_pseudocounts'
+        - 'soloUMIlen 10'
+        - 'soloCBstart 1'
+        - 'soloCBlen 20'
+        - 'soloUMIstart 21'

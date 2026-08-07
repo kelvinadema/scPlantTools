@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Mapper profiles",
+  "type": "object",
+  "properties": {
+    "mappers": {
+      "type": "object",
+      "description": "mappers.<mapper>.<profile> -> profile body.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "description": "A named mapper profile. Merged into the sample entry, sample wins.",
+          "properties": {
+            "index_ref": {
+              "type": "string",
+              "description": "Entry in index_config.yaml this profile maps against."
+            },
+            "extra_mapping_args": {
+              "type": "array",
+              "description": "Passed through to the mapper verbatim.",
+              "items": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            }
+          },
+          "required": [
+            "index_ref"
+          ]
+        }
+      }
+    }
+  },
+  "required": [
+    "mappers"
+  ],
+  "additionalProperties": false
+}

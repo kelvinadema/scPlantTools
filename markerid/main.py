@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""
+Marker identification CLI.
+
+    python -m markerid.main \
+        --anndata results/integration/scVI/MtTip_noHVG/MtTip_noHVG.h5ad \
+        --name MtTip_noHVG --method hotspot --latentkey X_scVI
+
+`--method` is repeatable, so several methods can be compared on one dataset in
+a single load. Runs in the scMarkersV3.12 environment (envs/scMarkersV3.12.yml).
+"""
+
+import argparse
+import logging
+import os
+
+from pathlib import Path
+
+from shared.utils import setup_logger, pipeline_log_path
+from .markers import MarkerRun, METHODS
+from .methods import CLUSTER_DEPENDENT
+
+logger = logging.getLogger('MarkerLogging')
+
+
+# A manifest lists one value per line. Data files are excluded by suffix so a
+# single --anndata path is not mistaken for one and parsed as text.
+MANIFEST_SUFFIXES = ('.txt', '.tsv', '.csv', '.list')
+
+
+def normalize_list(values):
+    """Accept either repeated values or a single manifest file listing one per line."""
+    if len(values) == 1 and os.path.isfile(values[0]) \
+            and Path(values[0]).suffix.lower() in MANIFEST_SUFFIXES:
+        with open(values[0]) as handle:
+            return [line.strip() for line in handle if line.strip()]
+    return values
+
+
+def run_sample(adata_path, sample, methods, cluster_key, latent_key, counts_key,
+               n_genes, out_root, n_jobs):
+    """Run every requested method against one dataset, loading it once."""
+    results = {}
+    shared_adata = None
+    for method in methods:
+        out_dir = Path(out_root) / method if out_root else None
+        run = MarkerRun(adata_path=adata_path, sample=sample, method=method,
+                        cluster_key=cluster_key, latent_key=latent_key,
+                        counts_layer=counts_key, out_dir=out_dir,
+                        n_jobs=n_jobs, adata=shared_adata)
+        run.prepare()
+        # Preparation is deterministic given the arguments, so later methods
+        # reuse the filtered/normalised object instead of re-reading the h5ad.
+        shared_adata = run.adata
+        results[method] = run.run(n_genes=n_genes)
+    return results
+
+
+def main():
+    """CLI entry point: rank marker genes for one sample and method.
+
+    Returns:
+        int: Process exit status.
+    """
+    parser = argparse.ArgumentParser(description='Identify marker genes')
+    parser.add_argument('--method', required=True, action='append',
+                        choices=sorted(METHODS),
+                        help='Marker method; repeat to run several')
+    parser.add_argument('--anndata', required=True, nargs='+',
+                        help='.h5ad paths, or one text file listing them')
+    parser.add_argument('--name', required=True, nargs='+',
+                        help='Sample names, or one text file listing them, '
+                             'in the same order as --anndata')
+    parser.add_argument('--clusterkey', help='.obs key with cluster labels '
+                                             f'(required for {", ".join(CLUSTER_DEPENDENT)}, cosg)')
+    parser.add_argument('--latentkey', help='.obsm key with the latent space, '
+                                            'e.g. X_scVI (recommended)')
+    parser.add_argument('--countskey', default='corrected_counts',
+                        help="layer holding raw counts, or 'X'")
+    parser.add_argument('--ngenes', type=int, default=50,
+                        help='genes kept per geneset (0 for all)')
+    parser.add_argument('--outdir', default='results/markers',
+                        help='output root; each method writes to <outdir>/<method>/')
+    parser.add_argument('--jobs', type=int,
+                        default=int(os.environ.get('SLURM_CPUS_PER_TASK', 4)))
+    args = parser.parse_args()
+
+    paths = normalize_list(args.anndata)
+    names = normalize_list(args.name)
+    if len(paths) != len(names):
+        parser.error(f'--anndata ({len(paths)}) and --name ({len(names)}) '
+                     f'must have the same length')
+
+    # One log file per run, in its own logs/markerID/ subdirectory -- see
+    # shared.utils.pipeline_log_path for why. This used to be a fixed
+    # 'marker_info.log' with no run id, so every run appended to the same
+    # file forever (setup_logger's FileHandler defaults to append mode)
+    # instead of getting its own.
+    log_file = pipeline_log_path('markerID')
+    setup_logger(name='MarkerLogging', log_file=log_file, level=logging.INFO)
+
+    n_genes = args.ngenes or None
+    failed = []
+    for path, name in zip(paths, names):
+        logger.info('[MAIN] %s (%s)', name, path)
+        try:
+            run_sample(path, name, args.method, args.clusterkey, args.latentkey,
+                       args.countskey, n_genes, args.outdir, args.jobs)
+        except Exception:
+            logger.exception('[MAIN] %s failed', name)
+            failed.append(name)
+
+    if failed:
+        logger.error('[MAIN] %d/%d samples failed: %s',
+                     len(failed), len(names), ', '.join(failed))
+        raise SystemExit(1)
+
+
+if __name__ == '__main__':
+    main()

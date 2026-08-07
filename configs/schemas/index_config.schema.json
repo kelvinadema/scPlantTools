@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Index definitions",
+  "type": "object",
+  "properties": {
+    "indexes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "mapper": {
+            "type": "string",
+            "description": "Which mapper this index is built for. Must match the mapper of every sample that references it.",
+            "enum": [
+              "alevin",
+              "kb",
+              "starsolo"
+            ]
+          },
+          "idx_path": {
+            "type": "string",
+            "description": "Absolute path to the built index."
+          },
+          "genome": {
+            "type": "array",
+            "description": "FASTA path(s). More than one triggers a multi-reference merge.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "gtf": {
+            "type": "array",
+            "description": "GTF path(s); must be the same length as genome.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "extra_index_args": {
+            "type": "array",
+            "description": "Passed through to the index builder verbatim.",
+            "items": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            }
+          }
+        },
+        "required": [
+          "genome",
+          "gtf",
+          "idx_path",
+          "mapper"
+        ]
+      }
+    }
+  },
+  "required": [
+    "indexes"
+  ],
+  "additionalProperties": false
+}

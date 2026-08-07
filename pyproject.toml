@@ -1,0 +1,49 @@
+# Project metadata and tool configuration.
+#
+# THIS DOES NOT CHANGE HOW THE PIPELINE IS RUN. `python -m <package>.main` from
+# the repo root remains the only entry method, exactly as before -- see
+# CLAUDE.md's "Running it (on the cluster)". This file exists to declare the
+# package set, give pytest a rootdir, and hold linter config. It is not a
+# request to `pip install` anything.
+#
+# NO RUNTIME DEPENDENCIES ARE LISTED, deliberately. Each stage has its own conda
+# environment with its own `envs/*.yml` manifest, and those are the source of
+# truth. Duplicating them here would create a second list to drift out of sync,
+# and the stages do not share a resolvable dependency set anyway (the mapping
+# and integration envs disagree on several pins).
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scrnaseq-pipeline"
+version = "0.1.0"
+description = "Single-cell RNA-seq mapping, integration and annotation pipeline (Medicago truncatula and friends)"
+requires-python = ">=3.12"
+
+# Every stage env is Python 3.12 (scMapping 3.12.13, scIntegration 3.12.11,
+# scAnnotation 3.12.3, scMarkers 3.12.13, scFetch/scCH3/scCH5 3.12). The one
+# exception is cellBenderENV at 3.10.20, which is not in this floor because
+# nothing here imports it -- CellBender runs as a subprocess from its own env.
+
+[tool.setuptools]
+packages = [
+    "shared",
+    "mapping",
+    "integration",
+    "annotation",
+    "markerid",
+    "refine",
+    "fetch",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: takes more than a second or two; excluded by `sc test --fast`",
+    "needs_gpu: requires a visible GPU; skipped on login nodes",
+]
+# Kept quiet on purpose: these tests will import scanpy/anndata, which are noisy
+# on import, and a wall of warnings is how a real failure gets missed.
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]

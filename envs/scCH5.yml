@@ -1,0 +1,92 @@
+# Chapter 5 analysis environment (Medicago root tip resource).
+#
+# Eighth environment. `scCH3.yml` is the template and covers notebooks 00-02 and
+# 04 as-is; this one exists because notebook 03 needs a trajectory stack that no
+# other environment carries:
+#
+#   cellrank >= 2.0    GPCCA fate mapping, CytoTRACEKernel, ConnectivityKernel
+#   pygpcca            the generalised Perron-cluster analysis cellrank calls
+#   scvelo             ONLY for scv.pp.moments -- CytoTRACEKernel requires an
+#                      imputed layer (`Ms`). No RNA velocity is computed anywhere
+#                      in this chapter; there is no spliced/unspliced data.
+#   petsc4py/slepc4py  optional real-Schur backend for pygpcca. Without them
+#                      pygpcca falls back to a dense scipy path that is fine at
+#                      78k cells but slower and heavier on RAM. Included because
+#                      `spectrum_diagnostics` sweeps n_macrostates repeatedly.
+#
+# Like scCH3 this deliberately does NOT include scvi-tools: the notebooks read
+# the h5ads that the integration and refine stages already wrote, and never train
+# or load a model. Loading a `model.pt` belongs in those stages, not here.
+#
+#   conda env create -f envs/scCH5.yml
+#   conda activate scCH5
+#   python -m ipykernel install --user --name scCH5 --display-name "Python (scCH5)"
+#
+# No post-install patch needed.
+#
+# NOTE: cellrank/pygpcca/scvelo ARE pinned even though the rest is not. The
+# trajectory results are the part of this chapter most sensitive to library
+# version -- macrostate decomposition can change between cellrank minor releases
+# -- and an unpinned fate probability is not reconstructable. The remaining
+# unpinned entries follow scCH3's posture and get frozen with
+# `conda env export --no-builds` once the chapter settles.
+name: scCH5
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  # cellrank 2.3.2 requires python >=3.12, so 3.12 it is. Do NOT drop to 3.11:
+  # the solve fails outright (tried 2026-07-30).
+  - python=3.12
+
+  # Core
+  - numpy               # left to the solver; cellrank 2.3.2 pins its own bound
+  - pandas<3            # scanpy/anndata are not clean on pandas 3.x yet
+  - scipy
+  - scikit-learn
+  - h5py
+  - pytables
+  - numba               # scvelo.pp.moments and cellrank kernels lean on it
+
+  # Single-cell
+  - anndata
+  - scanpy
+  - leidenalg
+  - igraph
+  - scikit-misc
+
+  # Trajectory -- the reason this env exists. Pinned; see note above.
+  - cellrank=2.3.2
+  - pygpcca=1.0.4
+  - scvelo=0.3.3
+  - petsc4py
+  - slepc4py
+
+  # Statistics
+  - statsmodels         # partial correlation in cytotrace_confound_check
+  - pingouin
+
+  # Plotting (exploratory only; thesis figures are built in R)
+  - matplotlib
+  - plotnine
+  - seaborn
+
+  # Optional: enables cellrank's VelocityKernel model='stochastic' (analytic
+  # Hessian). NOT used -- measured slower than the alternatives on this data
+  # (64.8 s vs 16.1 s on 800 cells). Listed because without it cellrank silently
+  # falls back from 'stochastic' to the deprecated 'monte_carlo', which is a
+  # confusing stall rather than an error. Installed via pip in the built env.
+  - pip
+  - pip:
+      - jax
+
+  # Notebook + batch execution
+  - jupyterlab
+  - ipykernel
+  - ipywidgets
+  - nbconvert           # batch script executes the notebooks headless
+  - nbformat
+  - papermill           # parameterised headless runs, used by run_ch5_topology.sh
+
+  # Config
+  - pyyaml

@@ -1,0 +1,22 @@
+--- checkpoint.py
++++ checkpoint.py
+@@ -112,8 +112,17 @@
+ 
+             file_list = save_random_state(filebase=filebase)
+ 
+-            torch.save(model_obj, filebase + '_model.torch')
+-            torch.save(scheduler, filebase + '_optim.torch')
++            # torch.save(model_obj, ...) and torch.save(scheduler, ...) pickle the
++            # live objects and fail with "cannot pickle 'weakref.ReferenceType'
++            # object" on this torch/pyro combination (CellBender #296, #395).
++            # Save the model's state_dict instead, and use PyroOptim's own
++            # dill-backed .save() for the scheduler rather than raw torch.save.
++            # Fix from https://github.com/broadinstitute/CellBender/pull/444.
++            # Local patch, not part of the pip/conda install -- see
++            # scRNAseq/CLAUDE.md's CellBender checkpoint section if this file is
++            # ever reinstalled/upgraded and the fix needs reapplying.
++            torch.save(model_obj.state_dict(), filebase + '_model.torch')
++            scheduler.save(filebase + '_optim.torch')
+             scheduler.save(filebase + '_optim.pyro')  # use PyroOptim method
+             pyro.get_param_store().save(filebase + '_params.pyro')
+             file_list = file_list + [filebase + '_model.torch',

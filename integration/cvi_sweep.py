@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+
+"""
+Rank a `wasserstein_penalty` x `n_salient_latent` grid for one contrastiveVI target.
+
+    python -m integration.cvi_sweep \
+        --icfg configs/integration_config.yaml \
+        --scfg configs/sample_metadata.yaml \
+        --target MtSZ_cVI_10x_BAP
+
+WHY THIS IS A SEPARATE ENTRY POINT and not `--tune` on the target: contrastiveVI's
+objective is a sum of a target ELBO and a background ELBO with no term rewarding
+salient/background separation. Raising `n_salient_latent` strictly improves target
+reconstruction and any nonzero `wasserstein_penalty` strictly worsens the objective,
+so an elbo_validation search selects maximum salient capacity and zero penalty --
+the degenerate fit. validate.py refuses `tune: true` here for that reason. Every
+criterion this script ranks on is computed OUTSIDE the objective.
+
+WHAT IT WRITES. `{target}_contrast_grid.tsv` under the target's results dir, one
+row per grid point. Nothing else: each fit is disposable (`persist=False`), so no
+model, no h5ad, and the target's registry entry is never touched.
+
+The table ACCUMULATES across runs by default, so extending a ladder does not
+re-pay for the points already measured, and re-running a point stores it as a
+replicate rather than overwriting. Replication matters here: an identical re-run
+of 10x_BAP moved `leakage_ratio` from 0.353 to 0.556 while `separation` held at
+0.324 vs 0.343, so leakage carries fit-to-fit variance that a single observation
+hides. `best_grid_point` takes the MEDIAN across replicates for that reason.
+Pass `--fresh` to start a clean table.
+
+This script only measures. To have a target choose its own parameters and train
+the winner, set `sweep: true` on it in integration_config.yaml -- the
+orchestrator then runs this same grid and trains the selected point, recording
+the choice in the registry.
+
+READING THE TABLE. Four columns, deliberately NOT collapsed into one score,
+because they trade against each other and the balance is a judgement call:
+
+  separation      background iLISI minus salient iLISI. Higher = the two latents
+                  did their separate jobs. <=0 is degenerate. This is a screen,
+                  not evidence the salient axis is biological.
+  leakage_ratio   identity NMI in the salient space over the same in the
+                  background space, measured on BACKGROUND CELLS ONLY -- they
+                  had no perturbation, so any structure there is leakage by
+                  construction. Lower is better; near 1 means the salient space
+                  is a cell-type map that happens to split the contrast.
+  qc_max_abs_rho  largest |Spearman| between a salient dimension and a QC
+                  fraction. Matters more here than anywhere else in the pipeline
+                  because ContrastiveVI CANNOT take covariates (scvi-tools
+                  registers them and its module never reads them -- see
+                  contrastive.module_supports_covariates), so this variation is
+                  uncorrectable and can only be measured.
+  responder_frac  fraction of target cells above the background 95th percentile
+                  of salient norm. Present so a penalty that suppresses leakage
+                  can be seen suppressing real signal too.
+
+A good point has high `separation`, low `leakage_ratio`, low `qc_max_abs_rho`,
+and a `responder_frac` that has not collapsed relative to penalty=0.
+
+COST. Each point is one full fit. On the CH5 contrasts that is ~2 min (nuclei,
+~5.6k cells) to ~2 h (bd_NOD, 94.7k), so size the grid to the contrast --
+`--penalties` and `--salient` exist for that.
+"""
+
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+from shared.targets import resolve_run_spec
+from .orchestrator import IntegrationManager
+from .contrastive import select_contrast_grid, summarise_contrast_grid, METHOD_NAME
+
+# Default axes. The ladder has been cut off below its turnover twice; the
+# measurements and what they showed are in docs/decisions/contrastive-sweep.md.
+# The sub-1 rungs are kept because that is where leakage_ratio moves fastest,
+# even though the minimum lies higher.
+DEFAULT_PENALTIES = (0.0, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0)
+# n_salient_latent holds at the published default until a penalty is chosen;
+# sweeping both at once multiplies cost to answer a second-order question.
+DEFAULT_SALIENT = (10,)
+# Three fits per point. Enough to see whether two points differ by more than the
+# noise, which one fit cannot show at all; more than three multiplies cost
+# against a spread that is already visible at three.
+DEFAULT_SEEDS = (0, 1, 2)
+
+
+def build_grid(penalties, salient):
+    """Grid points, penalty-major so the cheap baseline (penalty 0) runs first."""
+    return [{'wasserstein_penalty': float(p), 'n_salient_latent': int(n)}
+            for p in penalties for n in salient]
+
+
+def main(argv=None):
+    """CLI entry point: run a contrastiveVI grid for one target.
+
+    Args:
+        argv (list[str], optional): Argument vector.
+
+    Returns:
+        int: Process exit status.
+    """
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--icfg', required=True, help='Path to integration_config.yaml')
+    parser.add_argument('--scfg', required=True, help='Path to sample_metadata.yaml')
+    parser.add_argument('--target', required=True, help='A contrastiveVI target name')
+    parser.add_argument('--penalties', type=float, nargs='+', default=list(DEFAULT_PENALTIES))
+    parser.add_argument('--salient', type=int, nargs='+', default=list(DEFAULT_SALIENT))
+    parser.add_argument('--identity-key', default=None,
+                        help='.obs column standing in for cell type in the leakage test '
+                             '(default: contrastive.DEFAULT_IDENTITY_KEY)')
+    parser.add_argument('--seeds', type=int, nargs='+', default=list(DEFAULT_SEEDS),
+                        help='Fit each grid point once per seed. Replication is what turns an '
+                             'ordering into a claim: leakage_ratio carries fit-to-fit variance '
+                             'large enough to reorder the top points, and scvi.settings.seed '
+                             'defaults to None so unseeded runs were never reproducible.')
+    parser.add_argument('--fresh', action='store_true',
+                        help='Start a clean grid table instead of appending to the existing '
+                             'one. Appending is the default so extending a ladder keeps what '
+                             'is already measured, and repeated points accumulate as '
+                             'replicates.')
+    parser.add_argument('--out-dir', default=None,
+                        help='Where to write the TSV (default: the target results dir)')
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
+    logger = logging.getLogger('cvi_sweep')
+
+    manager = IntegrationManager(args.icfg, args.scfg, args.target,
+                                 dimreduction='umap', plot=False)
+    spec = resolve_run_spec(manager.config, args.target)
+    if spec['method'] != 'contrastiveVI':
+        parser.error("target '{}' has method '{}'; this sweep is only for contrastiveVI "
+                     'targets.'.format(args.target, spec['method']))
+
+    # Same artifact resolution and layer dropping the real run does, so the grid
+    # is fitted on exactly the data the chosen point will later be trained on.
+    if spec.get('artifact_key'):
+        manager.artifact_key = spec['artifact_key']
+    manager.keep_layers = spec.get('keep_layers')
+    adata = manager._concatenate_adata(samples=spec['samples'])
+
+    grid = build_grid(args.penalties, args.salient)
+    logger.info('[cvi_sweep] %s: %d grid point(s) over %d cells',
+                args.target, len(grid), adata.n_obs)
+
+    out_dir = Path(args.out_dir) if args.out_dir else (
+        manager.output_dir / METHOD_NAME / args.target)
+    kwargs = {}
+    if args.identity_key:
+        kwargs['identity_key'] = args.identity_key
+
+    # The target's own architecture, under every grid point. Fixed 2026-08-04;
+    # this had never been passed by either caller, so the grid fitted at
+    # contrastive._MODEL_DEFAULTS -- `n_layers: 1` -- while every CH5 target
+    # states 2 and is trained at 2. A penalty selected at a depth it is not
+    # applied at is not comparable: depth and wasserstein_penalty both govern
+    # how much shared variation reaches the salient space. Grids written before
+    # this date were measured one layer shallower than the models that used
+    # them, so re-run rather than reuse. Same fix in
+    # orchestrator._sweep_contrast, which is the `sweep: True` path.
+    base_params = (spec.get('model_params') or {}).get('model_params') or {}
+
+    df = select_contrast_grid(
+        adata,
+        background_samples=spec['background'],
+        target_samples=spec['target_samples'],
+        target=args.target,
+        grid=grid,
+        covariates=spec['covariates'],
+        batch_key=spec['batch_key'],
+        layer=(spec.get('keep_layers') or ['corrected_counts'])[0],
+        train_args=spec.get('train_args'),
+        base_model_params=base_params,
+        out_dir=out_dir,
+        logger=logger,
+        append=not args.fresh,
+        seeds=args.seeds,
+        **kwargs)
+
+    summary = summarise_contrast_grid(df)
+    cols = [c for c in ('wasserstein_penalty', 'n_salient_latent', 'n', 'quality_median',
+                        'quality_range', 'separation_median', 'leakage_median',
+                        'leakage_range', 'eff_dim_median', 'collapsed_frac')
+            if c in summary.columns]
+    print('\n=== {} (median over seeds; read quality_range before trusting the order) ===\n{}'
+          .format(args.target, summary[cols].to_string(index=False)))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
