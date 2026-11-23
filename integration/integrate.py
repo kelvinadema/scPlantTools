@@ -1068,6 +1068,10 @@ class SingleCellIntegrate:
         # diagnostic it was. markerid applies its own detection floor
         # (min_cells=10, markerid/markers.py) so nothing undetected leaks through.
         #
+        # Provenance: objects saved before 2026-08-18 hold only the HVG subset
+        # (2,000 genes), so markers called from them are limited to HVGs -- on
+        # MtSZ_sysvi_labels, 3.8% of Medicago's gene space.
+        #
         # `hvg` is recorded in .var so a consumer can recover the training
         # subset, and the latent is per-cell so it transfers unchanged -- the
         # cells and their order are identical by construction.
