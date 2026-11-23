@@ -65,12 +65,6 @@ def normalize_gene_id(gene: str) -> str:
     normalized IDs are ever compared. Unifies the separator and case disagreements
     between marker files and proteomes and strips any annotation-release suffix.
     See docs/decisions/proteome-preparation.md.
-
-    Args:
-        gene (str): Identifier as written.
-
-    Returns:
-        str: Normalized identifier.
     """
     gene = unquote(gene.strip())
     gene = _ANNOT_VERSION.sub('', gene)
@@ -78,17 +72,9 @@ def normalize_gene_id(gene: str) -> str:
 
 
 def _compile_rule(species: str, rule) -> dict:
-    """Validate and compile one species' gene_id rule from the config.
-
-    Args:
-        species (str): Species name, for the error messages.
-        rule (dict or None): The `gene_id:` block. None means 'from: id'.
-
-    Returns:
-        dict: Compiled rule with 'source', 'pattern', 'template' and 'exclude'.
-
-    Raises:
-        ProteomeError: If the rule is malformed or its regex will not compile.
+    """Validate and compile one species' `gene_id:` block (None means 'from: id')
+    into 'source', 'pattern', 'template' and 'exclude'. Raises ProteomeError if
+    the rule is malformed or a regex will not compile.
     """
     if rule is None:
         rule = {'from': 'id'}
@@ -137,15 +123,8 @@ def _compile_rule(species: str, rule) -> dict:
 
 
 def _gene_from_header(header: str, rule: dict):
-    """Extract the raw (un-normalized) gene ID from one FASTA header line.
-
-    Args:
-        header (str): Header text, without the leading '>'.
-        rule (dict): A compiled rule from `_compile_rule`.
-
-    Returns:
-        str or None: The gene ID, or None when the rule does not match.
-    """
+    """The raw (un-normalized) gene ID in one FASTA header (without '>'), or None
+    when the compiled rule does not match."""
     ident, _, description = header.partition(' ')
     source, pattern, template = rule['source'], rule['pattern'], rule['template']
 
@@ -170,13 +149,7 @@ def sanitize_sequence(sequence: str, strip_trailing_stop=True, mask_char='X'):
     would shift the rest of the sequence out of frame relative to its true
     alignment. See docs/decisions/proteome-preparation.md.
 
-    Args:
-        sequence (str): Raw sequence.
-        strip_trailing_stop (bool): Whether to remove a terminal '*'.
-        mask_char (str): Replacement for a non-standard residue.
-
-    Returns:
-        tuple: (clean (str), n_masked (int), had_trailing_stop (bool)).
+    Returns (clean sequence, number of residues masked, had a trailing stop).
     """
     clean = sequence.strip().upper()
     had_trailing_stop = False
@@ -194,29 +167,14 @@ def sanitize_sequence(sequence: str, strip_trailing_stop=True, mask_char='X'):
 
 
 def _wrap(sequence: str, width: int):
-    """FASTA line wrapping. `width` <= 0 writes the sequence on one line.
-
-    Args:
-        sequence (str): Sequence to wrap.
-        width (int): Characters per line.
-
-    Returns:
-        str: The wrapped sequence.
-    """
+    """FASTA line wrapping. `width` <= 0 writes the sequence on one line."""
     if width and width > 0:
         return '\n'.join(sequence[i:i + width] for i in range(0, len(sequence), width))
     return sequence
 
 
 def _iter_fasta(path: Path):
-    """Yield (header, sequence) pairs, concatenating each record's lines.
-
-    Args:
-        path (Path): FASTA file.
-
-    Yields:
-        tuple: (header (str), sequence (str)).
-    """
+    """Yield (header, sequence) pairs, concatenating each record's lines."""
     header, chunks = None, []
     with open(path) as handle:
         for line in handle:
@@ -238,19 +196,10 @@ def prepare_proteome(species: str, proteome_path, out_path, gene_id_rule=None,
     post-hoc cleaning and the marker lookup is an exact dict hit. See
     docs/decisions/proteome-preparation.md.
 
-    Args:
-        species (str): Species name.
-        proteome_path (Path): Source FASTA.
-        out_path (Path): Where the primary-transcript FASTA is written.
-        gene_id_rule (dict, optional): This species' `gene_id:` block.
-        processing (dict, optional): Sequence-hygiene settings, over
-            DEFAULT_PROCESSING.
-
-    Returns:
-        dict: Counts and paths describing what was written.
-
-    Raises:
-        ProteomeError: If the rule is malformed or no sequence survives.
+    `processing` overrides DEFAULT_PROCESSING. Returns counts and paths
+    describing what was written. Raises ProteomeError if the proteome is
+    missing, the rule or mask_char is invalid, no header resolves, or every
+    sequence is below `min_length`.
     """
     proteome_path, out_path = Path(proteome_path), Path(out_path)
     if not proteome_path.exists():
@@ -352,14 +301,7 @@ def prepare_proteome(species: str, proteome_path, out_path, gene_id_rule=None,
 
 
 def normalize_tissue(value: str) -> str:
-    """Tissue names are compared case- and whitespace-insensitively.
-
-    Args:
-        value (str): Tissue as written.
-
-    Returns:
-        str: Normalized tissue name.
-    """
+    """Tissue names are compared case- and whitespace-insensitively."""
     return str(value or '').strip().lower()
 
 
@@ -370,17 +312,8 @@ def read_marker_genes(marker_file, gene_column='Genes') -> dict:
     column when `gene_column` is absent. Multi-alias cells are split, since either
     alias may be the resolvable one. **No tissue filtering happens here** -- it
     would shrink the orthogroup universe and weaken every enrichment test. See
-    docs/decisions/proteome-preparation.md.
-
-    Args:
-        marker_file (Path): The marker table.
-        gene_column (str): Column holding gene IDs.
-
-    Returns:
-        dict: {normalized gene: raw ID}.
-
-    Raises:
-        ProteomeError: If the file does not exist.
+    docs/decisions/proteome-preparation.md. Raises ProteomeError if the file
+    does not exist.
     """
     marker_file = Path(marker_file)
     if not marker_file.exists():
@@ -412,17 +345,9 @@ def validate_markers(species: str, marker_file, proteome_genes: set,
     no_protein / unknown rather than merely counted -- only `unknown` means
     something is wrong. See docs/decisions/proteome-preparation.md.
 
-    Args:
-        species (str): Species name.
-        marker_file (Path): The marker table.
-        proteome_genes (set[str]): Normalized gene IDs in the prepared proteome.
-        gene_column (str): Column holding gene IDs.
-        genemap (GeneMap, optional): Enables the classification.
-
-    Returns:
-        dict: Counts, the four classified lists, and three coverage figures.
-            `coverage` is raw matched/total; `coverage_adjusted` divides by the
-            markers that could have matched and is what the floor applies to.
+    Returns counts, the classified lists, and three coverage figures:
+    `coverage` is raw matched/total; `coverage_adjusted` divides by the markers
+    that could have matched and is what the floor applies to.
     """
     markers = read_marker_genes(marker_file, gene_column=gene_column)
     total = len(markers)
@@ -483,16 +408,8 @@ def crosscheck_annotation(prepared: dict, genemaps: dict, out_dir, min_recall=0.
     protein -- because the inverse does not catch a proteome that is a strict
     subset of its annotation. See docs/decisions/proteome-preparation.md.
 
-    Args:
-        prepared (dict): Output of `prepare_all`.
-        genemaps (dict): {species: GeneMap}.
-        out_dir (Path): Where the report TSV is written.
-        min_recall (float): Below this, the species is an error.
-        warn_recall (float): Below this, the species is a warning.
-        logger (logging.Logger, optional): Defaults to 'AnnotationLogging'.
-
-    Returns:
-        dict: Per-species recall and the overall verdict.
+    Recall below `min_recall` is an error, below `warn_recall` a warning; the
+    report TSV goes to `out_dir`.
     """
     logger = logger or logging.getLogger('AnnotationLogging')
     out_dir = Path(out_dir)
@@ -561,15 +478,7 @@ def crosscheck_annotation(prepared: dict, genemaps: dict, out_dir, min_recall=0.
 
 
 def file_digest(path, chunk_size=1 << 20) -> str:
-    """sha256 of a file, read in chunks -- proteomes are hundreds of MB.
-
-    Args:
-        path (Path): File to hash.
-        chunk_size (int): Bytes per read.
-
-    Returns:
-        str: Hex digest.
-    """
+    """sha256 hex digest of a file, read in chunks -- proteomes are hundreds of MB."""
     digest = hashlib.sha256()
     with open(path, 'rb') as handle:
         for chunk in iter(lambda: handle.read(chunk_size), b''):
@@ -583,12 +492,6 @@ def cache_key(prepared: dict) -> str:
     Hashing the *prepared* proteome folds the proteome version, the gene_id rule and
     the isoform choice into one value, so any change yields a new key and any
     combination already computed is found again.
-
-    Args:
-        prepared (dict): Output of `prepare_all`.
-
-    Returns:
-        str: Hex digest.
     """
     digest = hashlib.sha256()
     for species in sorted(prepared):
@@ -601,16 +504,8 @@ def prepare_all(proteome_dict: dict, out_dir, gene_id_rules=None, processing=Non
                 logger=None) -> dict:
     """Prepare every species' primary-transcript proteome into `out_dir`.
 
-    Args:
-        proteome_dict (dict): {species: source FASTA path}.
-        out_dir (Path): Where the prepared FASTAs go.
-        gene_id_rules (dict, optional): {species: gene_id block}.
-        processing (dict, optional): Shared sequence-hygiene config; a species may
-            override any key via `processing['overrides'][species]`.
-        logger (logging.Logger, optional): Defaults to 'AnnotationLogging'.
-
-    Returns:
-        dict: {species: the dict `prepare_proteome` returned}.
+    `processing` is shared; a species may override any key via
+    `processing['overrides'][species]`. Returns {species: `prepare_proteome` result}.
     """
     logger = logger or logging.getLogger('AnnotationLogging')
     gene_id_rules = gene_id_rules or {}
@@ -656,17 +551,8 @@ def validate_all(marker_dict: dict, prepared: dict, out_dir, min_coverage=0.8,
                  logger=None) -> dict:
     """Validate every species' marker file against its prepared proteome.
 
-    Args:
-        prepared (dict): Output of `prepare_all`.
-        marker_files (dict): {species: marker table path}.
-        out_dir (Path): Where the coverage report is written.
-        min_coverage (float): Adjusted-coverage floor below which a species fails.
-        gene_column (str): Column holding gene IDs.
-        genemaps (dict, optional): {species: GeneMap}, enabling classification.
-        logger (logging.Logger, optional): Defaults to 'AnnotationLogging'.
-
-    Returns:
-        dict: {species: the dict `validate_markers` returned}.
+    A species fails below `min_coverage` adjusted coverage (or its entry in
+    `min_coverage_overrides`). Returns {species: `validate_markers` result}.
     """
     logger = logger or logging.getLogger('AnnotationLogging')
     overrides = min_coverage_overrides or {}
@@ -703,9 +589,8 @@ def validate_all(marker_dict: dict, prepared: dict, out_dir, min_coverage=0.8,
                 'symbols cannot be recovered and non-coding markers count against '
                 'coverage', species)
 
-        # One file per class. Lumping them together was the old behaviour and
-        # made the actionable IDs (unknown) impossible to find among the ones
-        # that need no action at all (noncoding).
+        # One file per class, so the actionable IDs (unknown) are not buried
+        # among the ones that need no action (noncoding).
         for kind in ('noncoding', 'no_protein', 'unknown'):
             if report[kind]:
                 path = out_dir / f'{species}_{kind}_markers.txt'

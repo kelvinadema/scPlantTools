@@ -22,8 +22,8 @@ class CellTypeStandardizer:
         # nodule vocabulary; nothing downstream special-cases it.
         self.po = pronto.Ontology(io.BytesIO(merged_obo_bytes(obo_file, extensions)))
         self.lookup, self.token_lookup = self._build_lookup()
-        # Materialised once; get_close_matches needs a sequence and rebuilding
-        # it per call was the bulk of match()'s cost.
+        # Materialised once: get_close_matches needs a sequence, and rebuilding
+        # it per call dominates match()'s cost.
         self._labels = list(self.lookup)
 
     def _build_lookup(self):
@@ -40,23 +40,16 @@ class CellTypeStandardizer:
         return lookup, token_lookup
 
     def _tokenize(self, text: str):
-        """Split a cell-type string into comparable lowercase tokens.
-
-        Args:
-            text (str): The string.
-
-        Returns:
-            set[str]: Tokens.
-        """
+        """Split a cell-type string into a set of lowercase word tokens."""
         return set(re.findall(r'\b\w+\b', text.lower()))
 
     def _break_tie(self, label, tied_labels):
         """
         Resolve a token-overlap tie, or return None if it genuinely cannot be.
 
-        A flat tie-rejection was dropping labels whose right answer was sitting
-        in the tied set. Two structurally different cases, distinguished by
-        whether the query is broader or narrower than its candidates:
+        Rejecting every tie would drop labels whose right answer sits in the
+        tied set. Two structurally different cases, distinguished by whether the
+        query is broader or narrower than its candidates:
 
         **The query is broader** -- its tokens are a subset of the candidates'.
         'Epidermis' ties with `plant epidermis`, `leaf epidermis`,
@@ -82,13 +75,8 @@ class CellTypeStandardizer:
         for lbl in tied_labels:
             by_id.setdefault(self.lookup[lbl]["id"], lbl)
 
-        # Head noun FIRST. The two rules are mutually exclusive by their subset
-        # conditions, but the order still matters: 'root exodermis' ties
-        # `exodermis` with `root`, and because exodermis is part_of root the
-        # ancestor rule would happily return `root` -- the container rather
-        # than the thing. Asking "which candidate is the head noun" first gets
-        # `exodermis`, and leaves the ancestor rule for the case it is actually
-        # meant for.
+        # Head noun FIRST: for 'root exodermis' the ancestor rule would return
+        # `root`, the container rather than the thing (see the docstring).
         head = ordered[-1] if ordered else None
         if head:
             contenders = [lbl for lbl in by_id.values()
@@ -111,18 +99,20 @@ class CellTypeStandardizer:
 
         Jaccard (intersection over *union*) rather than intersection over the
         query's own tokens: the latter is asymmetric, so a short query sharing
-        one generic token with a long candidate scored 0.5 and passed. That is
-        how 'Myrosinase cell', 'Photosynthetic cell' and 'Proliferating cell'
-        all resolved to 'cultured plant cell' -- they share only 'cell'.
+        one generic token with a long candidate scores 0.5 and passes --
+        'Myrosinase cell', 'Photosynthetic cell' and 'Proliferating cell' all
+        resolve to 'cultured plant cell' that way, sharing only 'cell'.
 
         A tie on the best score between terms with *different* PO ids is
         rejected rather than broken arbitrarily: 'Epidermis' overlaps 'bract
         epidermis' and 'leaf epidermis' equally, and picking one silently
-        invents a specificity the label does not have. The previous strict '>'
-        comparison kept whichever candidate came first in ontology file order,
-        so that choice was not even reproducible from the label alone.
-        Returning None leaves the label unmapped, which is recoverable; a
-        confidently wrong term is not.
+        invents a specificity the label does not have (a strict '>' would keep
+        whichever came first in ontology file order). Returning None leaves the
+        label unmapped, which is recoverable; a confidently wrong term is not.
+
+        `_standardized.csv` marker tables are cached and reused (see
+        OMGBuilder._load_markers), so a cache written under an earlier matching
+        rule keeps that rule's mappings until it is deleted.
         """
         label_tokens = self._tokenize(label)
         if not label_tokens:
@@ -186,17 +176,12 @@ class CellTypeStandardizer:
 
     def match(self, celltype: str, fuzzy: bool = True, token_threshold: float = 0.5,
               cutoff: float = 0.8, rollup: bool = True):
-        """Resolve one free-text cell type to a PO id.
+        """Resolve one free-text cell type to a PO term: exact name/synonym, then
+        token (Jaccard >= `token_threshold`), then difflib fuzzy (>= `cutoff`).
 
-        Args:
-            celltype (str): The string as written.
-            fuzzy (bool): Allow approximate matching.
-            token_threshold (float): Minimum token overlap for a token match.
-            cutoff (float): Minimum ratio for a fuzzy match.
-            rollup (bool): Fall back to a parent term when no exact match exists.
-
-        Returns:
-            tuple: (po_id or None, how it matched).
+        Returns a dict with `id`, `name`, `match` (the ontology label matched)
+        and `parents` (its is_a ancestors as (id, name) pairs, when `rollup`);
+        all empty/None when nothing matches.
         """
         label = celltype.strip().lower()
         if label in self.lookup:
@@ -220,15 +205,8 @@ class CellTypeStandardizer:
         return {"id": None, "name": None, "match": None, "parents": []}
 
     def standardize_file(self, filepath, column, outpath=None):
-        """Add a standardized PO id column to a marker table.
-
-        Args:
-            filepath (Path): The table to read.
-            column (str): Column holding free-text cell types.
-            outpath (Path): Where to write.
-
-        Returns:
-            pandas.DataFrame: The standardized table.
+        """Add `<column>_po_id/_po_name/_po_match/_po_parents` columns to a marker
+        table, writing it to `outpath` as CSV when given. Returns (table, outpath).
         """
         df = pd.read_csv(filepath, sep=None, engine="python")
         if column not in df.columns:

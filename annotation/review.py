@@ -2,11 +2,10 @@
 """
 Stage 2 -- where a person decides what the cell types are.
 
-Stage 1 produces 105 genesets across six marker methods on the test target,
-which collapse to **18 distinct cell types**: the methods largely rediscover the
-same populations, and `root hair cell` is found by all six. So the reviewer's
-object is not a geneset, it is a **group of genesets spanning methods** -- one
-final cell type, and the gene sets that describe it. That group is what seeds
+The six marker methods largely rediscover the same populations (counts for the
+test target are in shared/groups.py), so the reviewer's object is not a
+geneset, it is a **group of genesets spanning methods** -- one final cell type,
+and the gene sets that describe it. That group is what seeds
 the single refinement run.
 
 The page is organised around that, and around the three questions a review
@@ -87,15 +86,7 @@ def _text(row, key) -> str:
 
 
 def _count(row, key) -> int:
-    """Count the entries a row records under `key`.
-
-    Args:
-        row (dict): One table row.
-        key (str): Field to count.
-
-    Returns:
-        int: The count, 0 when absent.
-    """
+    """`row[key]` as an int; 0 when absent, blank or not numeric."""
     value = row.get(key)
     try:
         return 0 if value is None or pd.isna(value) else int(value)
@@ -104,15 +95,7 @@ def _count(row, key) -> int:
 
 
 def _round(values, digits=2) -> list:
-    """Round a sequence for JSON, leaving non-finite values as None.
-
-    Args:
-        values: Numeric sequence.
-        digits (int): Decimal places.
-
-    Returns:
-        list: Rounded values.
-    """
+    """Round a numeric sequence to `digits` places for JSON (NaN/inf are not converted)."""
     return [round(float(v), digits) for v in values]
 
 
@@ -325,14 +308,7 @@ def _resolve_umap_key(obsm_keys, preferred=None) -> str:
 
 
 def _read_table(path: Path, **kwargs) -> pd.DataFrame:
-    """Read one of stage 1's TSVs, or return an empty frame if it is absent.
-
-    Args:
-        path (Path): The TSV.
-
-    Returns:
-        pandas.DataFrame: The contents, possibly empty.
-    """
+    """Read one of stage 1's TSVs; an empty frame if it is absent or unreadable."""
     if not path.exists():
         return pd.DataFrame()
     try:
@@ -436,7 +412,7 @@ def build_payload(sample, adata, annotation_dir, methods, cluster_key,
         'drop_sentinel': DROP, 'ungrouped_sentinel': UNGROUPED,
         'genesets': {}, 'methods': [], 'genes': {}, 'gene_groups': [],
     }
-    # Phylogenetic clade map (advisory, Rung 1): {species -> clade}, so the JS
+    # Phylogenetic clade map (advisory): {species -> clade}, so the JS
     # can render which clades back each candidate and flag a call resting on a
     # single clade. Empty when no weighting is configured -- the page then shows
     # raw species and no clade column.
@@ -484,10 +460,8 @@ def build_payload(sample, adata, annotation_dir, methods, cluster_key,
                         record[col] = ''
             payload['genesets'][key] = record
 
-    # The starting grouping, from stage 1's own top-1 calls. A proposal the
-    # reviewer edits, and exactly the implicit merge the old per-geneset file
-    # performed whenever two genesets happened to get the same id -- made
-    # explicit and extended across methods.
+    # The starting grouping, from stage 1's own top-1 calls: a proposal the
+    # reviewer edits, merging genesets that share a top call across methods.
     document = propose(sample, templates, annotations=annotation_paths)
     payload['proposed'] = {
         'groups': {gid: {'po_id': g['po_id'], 'po_name': g['po_name'],
@@ -1322,14 +1296,7 @@ contested they are; click a row to select the cell type grouped onto that cluste
 
 
 def render(payload: dict) -> str:
-    """Render the review page's HTML from a payload.
-
-    Args:
-        payload (dict): As assembled by `write_review`.
-
-    Returns:
-        str: The complete page.
-    """
+    """The complete review page HTML for a `build_payload` payload."""
     if not payload.get('genesets'):
         raise ValueError('No stage 1 output to review')
 
@@ -1484,24 +1451,10 @@ honest option open for it; dropping it removes that option.</p>
 def write_review(sample, adata, annotation_dir, methods, cluster_key, out_path,
                  umap_key=None, gene_groups=None, max_points=DEFAULT_MAX_POINTS,
                  seed_quantile=0.9, seed_margin=0.25, clade_weights=None) -> Path:
-    """Assemble and write one sample's review page.
+    """Assemble and write one sample's review page; returns its path.
 
-    Args:
-        sample (str): Sample name.
-        adata (AnnData): The integrated object.
-        annotation_dir (Path): Where stage 1's per-method outputs live.
-        methods (list[str]): Marker methods to include.
-        cluster_key (str): `.obs` column holding clusters.
-        out_path (Path): Where the HTML is written.
-        umap_key (str): `.obsm` key holding the embedding.
-        gene_groups (dict, optional): Named gene sets to score.
-        max_points (int): Cap on cells sent to the page.
-        seed_quantile (float): Score quantile above which a cell counts as seeded.
-        seed_margin (float): Minimum margin for a seed to count.
-        clade_weights (dict, optional): Per-clade vote weights.
-
-    Returns:
-        Path: The written page.
+    `gene_groups` is the `[(celltype, [gene, ...]), ...]` list from
+    `load_report_gene_groups`; `clade_weights` is a `phylo.CladeWeights` or None.
     """
     payload = build_payload(sample=sample, adata=adata, annotation_dir=annotation_dir,
                             methods=methods, cluster_key=cluster_key, umap_key=umap_key,
@@ -1519,20 +1472,9 @@ def write_review(sample, adata, annotation_dir, methods, cluster_key, out_path,
 
 def main(annotation_config_path, sample, species=None, adata_path=None, cluster_key=None,
          umap_key=None, methods=None, out=None) -> int:
-    """CLI entry point: build the review page for one sample.
+    """CLI entry point: build the review page for one sample; returns 0.
 
-    Args:
-        annotation_config_path (Path): annotation_config.yaml.
-        sample (str): Sample name.
-        species (str): Target species.
-        adata_path (Path): The integrated object.
-        cluster_key (str): `.obs` column holding clusters.
-        umap_key (str): `.obsm` key holding the embedding.
-        methods (list[str]): Marker methods to include.
-        out (Path): Where the HTML is written.
-
-    Returns:
-        int: Process exit status.
+    Arguments mirror the CLI flags; unset ones fall back to the annotation config.
     """
     import scanpy as sc
 
@@ -1569,8 +1511,8 @@ def main(annotation_config_path, sample, species=None, adata_path=None, cluster_
         clade_weights = phylo_build(config['phylogeny'])
 
     adata = sc.read_h5ad(adata_path, backed='r')
-    # One dataset, one directory (2026-08-06): was `stage_out/review/{sample}_review.html`,
-    # which put the page a tree away from the decisions it produces.
+    # Beside the dataset's decisions. Pages built before 2026-08-06 are at
+    # `stage_out/review/{sample}_review.html`.
     out = Path(out) if out else (stage_out / sample / '{}_review.html'.format(sample))
     write_review(sample=sample, adata=adata, annotation_dir=annotation_dir, methods=methods,
                  cluster_key=cluster_key, out_path=out, umap_key=umap_key,

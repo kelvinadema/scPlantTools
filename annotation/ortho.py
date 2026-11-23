@@ -178,11 +178,8 @@ class OrthoManager:
     # ------------------------------------------------------------- orthofinder
 
     def run_orthofinder(self):
-        """Prepare the proteomes, run OrthoFinder if the cache misses, and parse the result.
-
-        Returns:
-            Path: The OrthoFinder results directory.
-        """
+        """Prepare the proteomes and run OrthoFinder unless this key has a completed
+        result; returns the results directory (the one holding Orthogroups/)."""
         self.prepare()
         run_dir = self.run_dir
 
@@ -266,14 +263,7 @@ class OrthoManager:
     # ------------------------------------------------------------------ parsing
 
     def _resolve_results_dir(self, results_dir):
-        """Find the actual results directory inside an OrthoFinder output tree.
-
-        Args:
-            results_dir (Path): The directory OrthoFinder was pointed at.
-
-        Returns:
-            Path: The directory holding Orthogroups.tsv.
-        """
+        """`results_dir` as given, or when None the newest completed result for this key."""
         if results_dir is not None:
             return Path(results_dir)
         found = self._find_cached_result(self.run_dir)
@@ -283,14 +273,7 @@ class OrthoManager:
         return found
 
     def _iter_orthogroups(self, results_dir):
-        """Yield (orthogroup id, {species: [gene ids]}) from Orthogroups.tsv.
-
-        Args:
-            results_dir (Path): The resolved results directory.
-
-        Yields:
-            tuple: (og_id (str), members (dict)).
-        """
+        """Yield (orthogroup id, species, [gene ids]) from Orthogroups.tsv."""
         og_file = Path(results_dir) / 'Orthogroups' / 'Orthogroups.tsv'
         with og_file.open() as handle:
             for row in csv.DictReader(handle, delimiter='\t'):
@@ -303,14 +286,7 @@ class OrthoManager:
                     yield og, species, [g.strip() for g in genes.split(',') if g.strip()]
 
     def parse_gene_to_og(self, results_dir=None):
-        """Build {species: {gene id: orthogroup id}}.
-
-        Args:
-            results_dir (Path): The resolved results directory.
-
-        Returns:
-            dict: The gene-to-orthogroup index.
-        """
+        """Build {gene id: orthogroup id}, one flat index across all species."""
         results_dir = self._resolve_results_dir(results_dir)
         gene_to_og = {}
         for og, _species, genes in self._iter_orthogroups(results_dir):
@@ -321,14 +297,7 @@ class OrthoManager:
         return gene_to_og
 
     def parse_og_to_genes(self, results_dir=None):
-        """Build {orthogroup id: {species: set[gene id]}}.
-
-        Args:
-            results_dir (Path): The resolved results directory.
-
-        Returns:
-            dict: The orthogroup-to-gene index.
-        """
+        """Build {orthogroup id: {species: [gene ids]}}."""
         results_dir = self._resolve_results_dir(results_dir)
         og_to_genes = defaultdict(lambda: defaultdict(list))
         for og, species, genes in self._iter_orthogroups(results_dir):
@@ -345,15 +314,8 @@ class OrthoManager:
         return self.gene_to_og.get(normalize_gene_id(gene))
 
     def get_genes_for_og(self, og, species=None):
-        """The genes one species contributes to one orthogroup.
-
-        Args:
-            og (str): Orthogroup id.
-            species (str): Species name.
-
-        Returns:
-            set[str]: Gene ids.
-        """
+        """The genes one species contributes to one orthogroup (a list), or every
+        species' genes when `species` is None; None for an unknown orthogroup."""
         if not self.og_to_genes:
             raise RuntimeError('og_to_genes is empty. Run parse_og_to_genes() first.')
         if og not in self.og_to_genes:

@@ -31,15 +31,7 @@ def resolve_env(config_env=None):
 
 
 def marker_file(marker_dir, sample):
-    """Path to one sample's marker TSV for a method.
-
-    Args:
-        marker_dir (Path): The method's directory.
-        sample (str): Sample name.
-
-    Returns:
-        Path: The TSV path.
-    """
+    """`{marker_dir}/{sample}.tsv`: one sample's marker TSV for a method."""
     return Path(marker_dir) / f'{sample}.tsv'
 
 
@@ -135,20 +127,8 @@ def _run_subprocess(env, sample, marker_dir, adata_path, method, cluster_key,
                     latent_key, counts_layer, n_genes, repo_root):
     """Run the markerID stage in its own conda env, for one sample and method.
 
-    Args:
-        env (str): Conda prefix for the markerID stage.
-        sample (str): Sample name.
-        marker_dir (Path): Where the markers are written.
-        adata_path (Path): The integrated object.
-        method (str): Marker method.
-        cluster_key (str): `.obs` column holding clusters.
-        latent_key (str): `.obsm` key holding the latent.
-        counts_layer (str): Layer holding counts.
-        n_genes (int): Genes to rank per cluster.
-        repo_root (Path): Working directory for the subprocess.
-
-    Returns:
-        int: The subprocess exit status.
+    `env` is the conda prefix; `repo_root` is the subprocess working directory.
+    Raises CalledProcessError on a non-zero exit.
     """
     python = Path(env) / 'bin' / 'python'
     if not python.exists():

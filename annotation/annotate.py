@@ -11,7 +11,6 @@ from .proteome import normalize_tissue
 
 from .plot import AnnotationPlotter
 
-# Positional tuples were indexed as cand[0]..cand[4] across four functions.
 # `weighted_species` is the phylogenetically-corrected support that drives the
 # score; `n_species` stays the raw count the classification and reports use.
 Candidate = namedtuple('Candidate', 'label n_species weighted_species total_X best_q score')
@@ -34,9 +33,7 @@ class scAnnotator:
         self.outfn = outfn
         self.logger = logger or logging.getLogger('AnnotationLogging')
         # Phylogenetic weighting of the species vote (annotation/phylo.py).
-        # None => every species weighs 1, i.e. the score is exactly n_species as
-        # before, so the feature is fully opt-in and the un-configured path is a
-        # no-op rather than a different number.
+        # None => every species weighs 1, so the score is the unweighted n_species.
         self.clade_weights = clade_weights
 
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -46,21 +43,14 @@ class scAnnotator:
 
     @property
     def enrichment(self):
-        """Test every (geneset, reference cell type) pair for orthogroup enrichment.
-
-        Returns:
-            pandas.DataFrame: One row per tested pair, with counts, p and q.
-        """
+        """Fisher enrichment of every (geneset, reference cell type) pair, computed
+        on first access: {species: {ref cell type: {geneset: stats}}}."""
         if self._enrichment is None:
             self._enrichment = self.omg.enrich_fisher()
         return self._enrichment
 
     def _collect_hits(self):
-        """Group the significant tests by geneset into candidate cell types.
-
-        Returns:
-            dict: {geneset: list of candidate records}.
-        """
+        """Every enrichment test, grouped by geneset: {geneset: [hit records]}."""
         per_target = defaultdict(list)
         for sp, ref_map in self.enrichment.items():
             for ref_ct, tgt_map in ref_map.items():
@@ -94,7 +84,7 @@ class scAnnotator:
         species term is phylogenetically weighted (phylo.py): four grasses count
         for less than four different families, because same-clade agreement is
         not four independent observations. With no `clade_weights` configured the
-        weight is the raw count and this is the original score exactly.
+        weight is the raw count.
 
         Significance is *not* affected -- the candidates here already passed the
         Fisher/BH-FDR filter upstream, and `best_q` is unchanged. Only the order,
@@ -114,18 +104,9 @@ class scAnnotator:
                       key=lambda c: (-c.score, -c.total_X, -c.weighted_species, c.best_q))
 
     def _classify_candidate(self, cand, S_min, X_total_min, q_single_strict, X_single_min):
-        """Decide whether one candidate is a call, a weak call, or rejected.
-
-        Args:
-            cand (dict): The candidate record.
-            S_min (float): Minimum weighted species support.
-            X_total_min (int): Minimum total orthogroup overlap.
-            q_single_strict (float): q a single-species call must clear.
-            X_single_min (int): Overlap a single-species call must clear.
-
-        Returns:
-            str: The verdict.
-        """
+        """'consensus' (>= `S_min` species, raw count, and >= `X_total_min`
+        overlap), 'single' (q <= `q_single_strict` and >= `X_single_min`
+        overlap), else 'ambiguous'."""
         if cand.n_species >= S_min and cand.total_X >= X_total_min:
             return 'consensus'
         if cand.best_q <= q_single_strict and cand.total_X >= X_single_min:
@@ -133,16 +114,7 @@ class scAnnotator:
         return 'ambiguous'
 
     def _get_dataset_children(self, label_id, ontology, dataset_terms):
-        """Ontology children of `label_id` that this dataset actually has terms for.
-
-        Args:
-            label_id (str): Parent PO id.
-            ontology: The loaded ontology.
-            dataset_terms (set[str]): PO ids present in this dataset.
-
-        Returns:
-            set[str]: Child PO ids.
-        """
+        """Sorted descendants of `label_id` that this dataset has terms for."""
         # Follows part_of as well as is_a (see ontology.py). Using only
         # subclasses() undercounts how much a term subsumes -- and that count
         # is what `too_general` thresholds on.
@@ -151,15 +123,7 @@ class scAnnotator:
         return sorted(self._descendants.get(label_id, set()) & dataset_terms)
 
     def _po_name(self, po_id, ontology):
-        """Readable name for a PO id, falling back to the id itself.
-
-        Args:
-            po_id (str): The ontology id.
-            ontology: The loaded ontology.
-
-        Returns:
-            str: Name or id.
-        """
+        """Readable name for a PO id, or None if it is not in the ontology."""
         if po_id and po_id in ontology:
             return ontology[po_id].name
         return None
@@ -168,15 +132,6 @@ class scAnnotator:
         """Which of a term's children are themselves significantly enriched.
 
         Used to prefer a specific call over its parent when the evidence supports it.
-
-        Args:
-            child_terms (set[str]): Candidate child PO ids.
-            candidates (list[dict]): This geneset's candidate records.
-            q_thresh (float): Significance threshold.
-            X_min_filter (int): Minimum overlap.
-
-        Returns:
-            list[dict]: The significant children.
         """
         strong = {c.label for c in candidates
                   if c.best_q <= q_thresh and c.total_X >= X_min_filter}
@@ -233,8 +188,7 @@ class scAnnotator:
                     'support_species': cand.n_species,
                     'support_species_list': ';'.join(sorted(agg[cand.label]['species'])),
                     # Phylogenetically-corrected support that drove the score;
-                    # equals support_species when no clade weighting is configured,
-                    # so an old-vs-new diff is visible in the table itself.
+                    # equals support_species when no clade weighting is configured.
                     'weighted_species': round(cand.weighted_species, 3),
                     'n_clades': (self.clade_weights.profile(agg[cand.label]['species'])['n_clades']
                                  if self.clade_weights is not None else cand.n_species),
@@ -275,23 +229,15 @@ class scAnnotator:
         """
         Resolve parent/child redundancy within a cluster, keeping one term.
 
-        Two things were wrong here and both showed up in real output.
+        Walks `part_of` as well as `is_a` (the relation set of ontology.py),
+        because PO models anatomical containment with `part_of`: following only
+        `is_a` would report `root endodermis` beside the `root cortex` it is
+        part of.
 
-        **It only followed `is_a`.** `ontology[term].subclasses()` ignores
-        `part_of`, which is how PO models anatomical containment, so
-        `root endodermis part_of root cortex` was invisible and both survived.
-        It now walks the same relation set as the marker rollup (ontology.py),
-        so a term and something it is part of can no longer both be reported.
-
-        **It kept both whenever both were supported.** The old rule collapsed
-        only when exactly one of the pair cleared `min_support`, on the
-        reasoning that two well-evidenced levels are each informative. In
-        practice that produced exactly the redundancy a reader objects to --
-        `cortex` beside `root cortex`, `endodermis` beside `root endodermis`,
-        both with the same support and near-identical scores, for the same
-        module.
-
-        The rule now always resolves the pair. The **child wins ties**, because
+        Every parent/child pair is resolved, even when both are well supported;
+        otherwise `cortex` sits beside `root cortex` with the same support and
+        near-identical scores. (Outputs from before this rule can list both.)
+        The **child wins ties**, because
         a child implies its parent -- reporting `root endodermis` already tells
         you it is endodermis, while the reverse is not true, so the specific
         term is strictly more informative at equal evidence. The parent only

@@ -17,28 +17,17 @@ class AnnotationPlotter:
 
     
     def _plot_species_support(self):
-        """How many reference species backed each called cell type.
-
-        Returns:
-            plotnine.ggplot: The figure.
-        """
+        """Boxplot of how many reference species backed each called cell type; writes support.png."""
         p = ggplot(self.annotation, aes(x="po_name", y="support_species")) + coord_flip() + geom_boxplot(fill="grey", alpha=0.6, color = 'black') + theme_bw() + labs(title="Number of supporting species per cell type", x="Cell type", y="# Supporting species")
         p.save(filename= '{}/support.png'.format(self.out_dir), dpi=600, width=6, height=4)
         return p
 
     def _plot_coenrichment(self, cluster_col="cluster", celltype_col="po_name", min_count=2, normalize=True, figsize=(8, 8), prop_threshold=0.05):
-        """Cluster-by-cell-type co-enrichment heatmap.
+        """Network of cell types called together in the same cluster; writes coenrichment.png.
 
-        Args:
-            cluster_col (str): Column holding clusters.
-            celltype_col (str): Column holding called cell types.
-            min_count (int): Drop pairs below this count.
-            normalize (bool): Show proportions rather than counts.
-            figsize (tuple): Figure size in inches.
-            prop_threshold (float): Drop proportions below this.
-
-        Returns:
-            The figure.
+        Edge weight is the number of clusters a pair co-occurs in, as a fraction
+        of all clusters when `normalize` (then `prop_threshold` applies, else
+        `min_count`). Returns the figure, or None when no edge survives.
         """
         co_counts = {}
         clusters_seen = self.annotation[cluster_col].nunique()

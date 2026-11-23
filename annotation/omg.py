@@ -41,8 +41,8 @@ class OMGBuilder:
         self.reference_columns = reference_columns or REFERENCE_COLUMNS
         self.target_columns = target_columns or TARGET_COLUMNS
         self.q_threshold = q_threshold
-        # OrthoManager.resolve_marker_tokens; see _resolve_genes. Optional, so
-        # a caller with no annotation files behaves exactly as before.
+        # OrthoManager.resolve_marker_tokens; see _resolve_genes. Optional:
+        # without it every token maps to itself.
         self.marker_resolver = marker_resolver
         # {po_id -> {tissues it was observed in}}, built while the reference
         # tables are read and consumed by annotate.py's post-hoc candidate
@@ -74,9 +74,8 @@ class OMGBuilder:
         """
         Marker tokens -> the gene IDs OrthoFinder emitted, as {token: [genes]}.
 
-        Without a resolver a token maps to itself, which is what ran before:
-        correct for a marker file naming locus IDs, and a silent drop for one
-        naming gene symbols. The resolver consults the species' annotation and
+        Without a resolver a token maps to itself: correct for a marker file
+        naming locus IDs, and a silent drop for one naming gene symbols. The resolver consults the species' annotation and
         recovers the symbol case -- 283 markers across the eight reference
         species here, 263 of them Arabidopsis.
 
@@ -187,12 +186,11 @@ class OMGBuilder:
                 parents = (row.get(f'{cluster_column}_po_parents') or '').strip()
                 if not po_id:
                     # A cell type the standardizer could not place in the
-                    # ontology is dropped, not passed through as raw text. It
-                    # used to fall back to the label itself, which then flowed
-                    # into `po_id` as a candidate ('Phloem parenchyma') that no
-                    # ontology operation can reason about -- it has no parents
-                    # to collapse against, no descendants to judge generality
-                    # by, and would fail validation in a decision file.
+                    # ontology is dropped, not passed through as raw text: a raw
+                    # label ('Phloem parenchyma') as `po_id` has no parents to
+                    # collapse against, no descendants to judge generality by,
+                    # and fails validation in a decision file. (Older outputs
+                    # could carry such raw labels as candidates.)
                     unmapped[(row.get(cluster_column) or '').strip()] += 1
                     continue
                 labels = [po_id]
@@ -212,11 +210,7 @@ class OMGBuilder:
         return dict(markers)
 
     def get_reference_markers(self):
-        """Marker genes per reference species and cell type, standardized to PO ids.
-
-        Returns:
-            dict: {(species, po_id): set[str]} of normalized gene ids.
-        """
+        """Load every reference marker table: {species: {po_id: set of gene ids}}."""
         for species, file_path in self.marker_files.items():
             self.ref_markers[species] = self._load_markers(
                 file_path, self.reference_columns, standardize=True, species=species)
@@ -236,11 +230,8 @@ class OMGBuilder:
         }
 
     def build_omgs(self):
-        """Project every species' markers into orthogroup space.
-
-        Returns:
-            dict: {(species, po_id): set[str]} of orthogroup ids.
-        """
+        """Project every species' markers into orthogroup space (into
+        `ref_omgs` and `target_omgs`; returns nothing)."""
         if not self.ref_markers:
             self.get_reference_markers()
 
@@ -261,47 +252,25 @@ class OMGBuilder:
             self.logger.warning('[ANNOTATION] No target marker mapped to an orthogroup')
 
     def get_target_omgs(self):
-        """The target's per-geneset orthogroup sets.
-
-        Returns:
-            dict: {geneset: set[str]} of orthogroup ids.
-        """
+        """The target's orthogroup set per geneset."""
         return self.target_omgs
 
     def get_ref_omgs(self):
-        """The reference species' per-cell-type orthogroup sets.
-
-        Returns:
-            dict: {(species, po_id): set[str]} of orthogroup ids.
-        """
+        """The reference orthogroup sets: {species: {po_id: set of orthogroup ids}}."""
         return self.ref_omgs
 
     def get_ref_genes(self):
-        """The reference genes behind each cell type, for reporting a hit's evidence.
-
-        Returns:
-            dict: {(species, po_id): set[str]} of gene ids.
-        """
+        """Target-species genes in each reference cell type's orthogroups:
+        {species: {po_id: sorted gene ids}}."""
         return {sp: {ct: self._map_og_to_target_genes(ogs) for ct, ogs in clusters.items()}
                 for sp, clusters in self.ref_omgs.items()}
 
     def get_target_genes(self):
-        """The target genes behind each geneset.
-
-        Returns:
-            dict: {geneset: set[str]} of gene ids.
-        """
+        """Target-species genes in each geneset's orthogroups: {geneset: sorted gene ids}."""
         return {ct: self._map_og_to_target_genes(ogs) for ct, ogs in self.target_omgs.items()}
 
     def _map_og_to_target_genes(self, ogs):
-        """The target genes belonging to the given orthogroups.
-
-        Args:
-            ogs (iterable[str]): Orthogroup ids.
-
-        Returns:
-            set[str]: Target gene ids.
-        """
+        """The target-species genes in the given orthogroups, sorted."""
         genes = set()
         for og in ogs:
             genes.update(self.og_to_gene.get(og, {}).get(self.target_species, []))
@@ -311,16 +280,9 @@ class OMGBuilder:
 
     @staticmethod
     def _contingency(ref_ogs, tgt_ogs, universe_size):
-        """The 2x2 table for one reference/target orthogroup overlap.
-
-        Args:
-            ref_ogs (set[str]): The reference cell type's orthogroups.
-            tgt_ogs (set[str]): The target geneset's orthogroups.
-            universe_size (int): Orthogroups shared by both species.
-
-        Returns:
-            tuple: (overlap, ref_only, target_only, neither).
-        """
+        """The 2x2 table for one reference/target orthogroup overlap within a
+        universe of `universe_size` orthogroups; returns (table, X, Y, Z, W) =
+        (table, overlap, reference-only, target-only, neither)."""
         X = len(ref_ogs & tgt_ogs)
         Y = len(ref_ogs) - X
         Z = len(tgt_ogs) - X

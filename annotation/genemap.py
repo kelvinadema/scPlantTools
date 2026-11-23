@@ -10,7 +10,7 @@ that carries both, so it is the bridge between them.
 
 It also answers the other half of the question. A marker naming an rRNA, a
 lincRNA or a mitochondrial gene is *expected* to be absent from a proteome,
-and previously that was indistinguishable from a genuine mismatch. The
+which without biotypes is indistinguishable from a genuine mismatch. The
 `gene_biotype` attribute separates the two, which is what lets marker coverage
 be measured against the genes that could have matched.
 
@@ -23,7 +23,7 @@ Both jobs are served by one pass over the annotation, producing three maps:
 Nothing here assumes a species has any of it. Two of the annotation files in
 this project (Oryza's transcript-only IRGSP GTF, Lotus's bare-`ID=` PGSB GFF3)
 carry neither names nor biotypes; they yield an index with an empty alias map
-and resolution degrades to the direct comparison that ran before.
+and resolution degrades to direct comparison.
 """
 
 import gzip
@@ -117,14 +117,7 @@ def _parse_attributes(field: str) -> dict:
 
 
 def _strip_id_prefix(value: str) -> str:
-    """Drop a `gene:`-style prefix an annotation may write on its ids.
-
-    Args:
-        value (str): Identifier as written.
-
-    Returns:
-        str: The identifier without its prefix.
-    """
+    """Drop a `gene:`-style prefix an annotation may write on its ids."""
     return _ID_PREFIX.sub('', value)
 
 
@@ -229,14 +222,8 @@ class GeneMap:
     # ------------------------------------------------------------------ cache
 
     def to_dict(self, digest=None) -> dict:
-        """Serialize this map, optionally stamping the source digest.
-
-        Args:
-            digest (str, optional): Content hash of the annotation it was built from.
-
-        Returns:
-            dict: JSON-serializable form.
-        """
+        """JSON-serializable form, stamped with the parser version and the source
+        file's `digest`."""
         return {
             'parser_version': PARSER_VERSION,
             'species': self.species,
@@ -249,14 +236,7 @@ class GeneMap:
 
     @classmethod
     def load(cls, path):
-        """Read a GeneMap back from its cached JSON.
-
-        Args:
-            path (Path): The cache file.
-
-        Returns:
-            GeneMap: The restored map.
-        """
+        """Read a GeneMap back from its cached JSON."""
         payload = json.loads(Path(path).read_text())
         return cls(
             payload['species'],
@@ -335,14 +315,10 @@ class GeneMap:
 
     def alias_table(self, proteome_genes: set, tokens) -> dict:
         """
-        The resolved-alias subset of this index, as {token -> [gene IDs]}.
-
-        This is what crosses into OMG building. The full index is tens of
-        megabytes and mostly irrelevant there; what the marker lookup actually
-        needs is only the handful of tokens that a marker file uses *and* that
-        resolve to a real proteome gene (283 across all species here). Keeping
-        the two separate means the enrichment step carries a small dict rather
-        than the whole annotation.
+        The resolved-alias subset of this index, as {token -> [gene IDs]}: only
+        the tokens a marker file uses that resolve to a proteome gene by alias
+        (283 across all species here). Not called by the pipeline:
+        OrthoManager.resolve_marker_tokens calls `resolve` directly.
         """
         table = {}
         for token in tokens:
@@ -357,8 +333,7 @@ def build_all(annotation_dict: dict, cache_dir, alias_attributes=None, logger=No
     Index every species that declares an annotation file.
 
     A species with no `annotation_file:` is simply absent from the result --
-    marker resolution then falls back to the direct comparison, which is what
-    ran before this module existed.
+    marker resolution then falls back to direct comparison.
     """
     logger = logger or logging.getLogger('AnnotationLogging')
     alias_attributes = alias_attributes or {}

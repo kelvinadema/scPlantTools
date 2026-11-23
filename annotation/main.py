@@ -25,57 +25,34 @@ def main(annotation_config_path: str, species: str=None, force:bool=False, valid
          tissue:list=None, force_decisions:bool=False):
     """Run the annotation stage: proteomes, OrthoFinder, enrichment, review.
 
-    Args:
-        annotation_config_path (Path): annotation_config.yaml.
-        species (str, optional): Target species; selects the profile.
-        force (bool): Force an OrthoFinder rerun.
-        validate_only (bool): Prepare proteomes and check markers, then stop.
-        orthofinder_only (bool): Run and parse OrthoFinder, then stop.
-        adata (Path, optional): Integrated object, for the review page.
-        sample_name (str, optional): Dataset name.
-        latent_key (str, optional): `.obsm` key holding the latent.
-        cluster_key (str, optional): `.obs` column holding clusters.
-        methods (list[str], optional): Marker methods to include.
-        tissue (str, optional): Restrict candidates to this tissue.
-        force_decisions (bool): Rebuild the decision scaffold.
-
-    Returns:
-        int: Process exit status.
+    Arguments mirror the CLI flags below; `tissue` is a list. Returns None, or
+    the OrthoFinder results directory with `orthofinder_only`. Raises
+    RuntimeError after the loop if any (sample, method) run failed.
     """
 
     # One config, several target species. resolve_species folds the selected
     # profile in and strips the target from `reference_species` -- see
-    # shared/species_profiles.py. A config in the old single-species shape is
-    # returned unchanged, so nothing here depends on the merge having happened.
+    # shared/species_profiles.py. A single-species config is returned unchanged.
     config = resolve_species(load_config(Path(annotation_config_path)),
                              species)['AnnotateConfigs']
     root_dir = find_root_dir()
     # Stable, not date-stamped: OrthoFinder runs are content-addressed by the
     # proteome set (see OrthoManager), so a rerun with unchanged proteomes must
     # be able to find the previous run rather than start a new dated tree.
-    #
-    # Config-driven rather than cwd-relative: find_root_dir() locates the repo
-    # via the `.root` marker, which ties output location to wherever this repo
-    # happens to be checked out. `output_dir:` decouples the two -- set it
-    # once to an absolute path and results land there regardless of where the
-    # code lives (e.g. a code checkout on one filesystem tier, results on
-    # another). Falls back to the old cwd-relative location when unset, so an
-    # existing config with no output_dir keeps working unchanged.
+    # `output_dir:` decouples results from where the code is checked out;
+    # unset, it is `<repo root>/results/annotation`.
     out_dir = Path(config.get('output_dir') or (root_dir / 'results/annotation'))
 
-    # Regenerable caches live OUTSIDE the deliverables tree (2026-08-06). Before
-    # this, `orthofinder/` (1.9 GB), `primary_transcripts/`, `genemaps/` and
-    # `validation/` sat as siblings of the per-dataset output, so nothing said
-    # which two gigabytes were safe to delete. `cache_dir:` overrides; the
-    # default is a `cache/annotation/` sibling of `output_dir`.
+    # Regenerable caches (orthofinder/, primary_transcripts/, genemaps/,
+    # validation/) live outside the deliverables tree, so it is clear what is
+    # safe to delete. `cache_dir:` overrides; the default is a
+    # `cache/annotation/` sibling of `output_dir`. Trees written before
+    # 2026-08-06 hold these caches beside the per-dataset output.
     cache_dir = Path(config.get('cache_dir') or (out_dir.parent / 'cache' / 'annotation'))
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # Initiate logging (configured exactly once, here). One file per run, in
-    # its own logs/annotation/ subdirectory -- see
-    # shared.utils.pipeline_log_path for why (every stage now shares this
-    # convention) and batch_scripts/run_annotation.sh's
-    # logs/annotation-<jobid>.out/.err for the matching SLURM-side naming.
+    # Logging is configured once, here: one file per run under
+    # logs/annotation/ (see shared.utils.pipeline_log_path).
     log_dir = config.get('log_dir') or (root_dir / 'logs')
     log_file = pipeline_log_path('annotation', log_dir=log_dir)
     logger = setup_logger(name = 'AnnotationLogging', log_file=log_file, level=logging.INFO)
@@ -197,18 +174,16 @@ def main(annotation_config_path: str, species: str=None, force:bool=False, valid
 
     # Build orthologous marker groups
     marker_dir = target_species_files['marker_file_dir']
-    # Built once and shared: parsing the 1.3 MB ontology per sample is pure
-    # repeat work, and OMGBuilder used to construct a second one internally.
+    # Built once and shared: parsing the 1.3 MB ontology per sample is repeat work.
     standardizer = CellTypeStandardizer(ontology_file, extensions=ontology_extensions)
     if ontology_extensions:
         logger.info('[MAIN] Ontology extended with %d file(s): %s',
                     len(ontology_extensions), ', '.join(Path(e).name for e in ontology_extensions))
 
-    # Phylogenetic weighting of the reference-species vote (phylo.py). Built once
-    # over the species that actually vote (those with a marker file), and passed
-    # to the annotator (scores) and the review report (advisory clade profile).
-    # Absent config -> None -> every species weighs 1 -> scores are exactly the
-    # old n_species, so this is fully opt-in.
+    # Phylogenetic weighting of the reference-species vote (see phylo.py). Built
+    # over the species that vote (those with a marker file), for the annotator
+    # and the review report. Without a `phylogeny:` block every species weighs
+    # 1, so scores equal the unweighted n_species.
     clade_weights = None
     phylo_cfg = config.get('phylogeny')
     if phylo_cfg:
@@ -374,8 +349,7 @@ def _annotate_one(sample, method, target_marker_file, gene_to_og, og_to_genes,
     annotations = scAnnotator(
         omg = omg,
         out_dir = method_out_dir,
-        # No '.tsv' here: scAnnotator appends '_significant_annotations.tsv'
-        # itself, so passing one produced 'X.tsv_significant_annotations.tsv'.
+        # No '.tsv' here: scAnnotator appends '_significant_annotations.tsv' itself.
         outfn = sample,
         standardizer = standardizer,
         clade_weights = clade_weights,
