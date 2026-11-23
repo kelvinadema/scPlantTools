@@ -74,14 +74,7 @@ class HVGSelector:
         sc.pp.log1p(self.adata_log)
 
     def _get_mean_var(self, X):
-        """Per-gene mean and population variance, sparse or dense.
-
-        Args:
-            X: The matrix, genes in columns.
-
-        Returns:
-            tuple: (mean (np.ndarray), var (np.ndarray)).
-        """
+        """Per-gene (mean, population variance), sparse or dense; genes in columns."""
         if sp.issparse(X):
             mean = np.array(X.mean(axis=0)).ravel()
             mean_sq = np.array(X.multiply(X).mean(axis=0)).ravel()
@@ -92,19 +85,10 @@ class HVGSelector:
         return mean, var
 
     def _hvg_scanpy(self, adata, flavor: str, batch_key=None):
-        """Return gene-indexed ranks from one of scanpy's own flavors.
+        """Gene-indexed ranks (1 = most variable) from one of scanpy's own flavors.
 
-        Args:
-            adata (AnnData): The view this flavor expects (raw for seurat_v3, log
-                otherwise).
-            flavor (str): A scanpy `highly_variable_genes` flavor.
-            batch_key (str, optional): Passed through to scanpy.
-
-        Returns:
-            pandas.Series: Rank per gene, 1 = most variable.
-
-        Raises:
-            ValueError: On an unsupported flavor, or a flavor that produced no metric.
+        `adata` is the view the flavor expects (raw for seurat_v3, log otherwise).
+        Raises ValueError on an unsupported flavor or one that produced no metric.
         """
         sc.pp.highly_variable_genes(adata, n_top_genes=adata.n_vars, flavor=flavor, inplace=True, batch_key=batch_key)
         genes = adata.var_names
@@ -124,15 +108,7 @@ class HVGSelector:
         return ranks
 
     def _normalize_ranks(self, ranks, genes):
-        """Reindex ranks onto `genes`, sending missing genes to the worst rank.
-
-        Args:
-            ranks (pandas.Series | np.ndarray): Ranks as produced.
-            genes (pandas.Index): The gene axis to align to.
-
-        Returns:
-            pandas.Series: Integer ranks, one per gene.
-        """
+        """Reindex ranks onto `genes` as integers, sending missing genes to the worst rank."""
         if isinstance(ranks, np.ndarray):
             ranks = pd.Series(ranks, index=genes)
         ranks = ranks.reindex(genes)
@@ -143,15 +119,7 @@ class HVGSelector:
         """Write one method's ranks into `self.adata.var[colname]`.
 
         Stored as float so genes the method never saw stay NaN rather than being given
-        a rank they did not earn.
-
-        Args:
-            ranks (pandas.Series | np.ndarray): Ranks for the genes this method saw.
-            genes (pandas.Index): Gene names those ranks belong to.
-            colname (str): `.var` column to write.
-
-        Returns:
-            pandas.Series: The ranks reindexed onto every gene.
+        a rank they did not earn. Returns the ranks reindexed onto every gene.
         """
         if not isinstance(ranks, pd.Series):
             ranks = pd.Series(ranks, index=genes)
@@ -164,11 +132,7 @@ class HVGSelector:
     # Mean-Variance methods
 
     def _mean_max(self):
-        """Rank genes by mean normalized expression.
-
-        Returns:
-            pandas.Series: Rank per gene, 1 = highest mean.
-        """
+        """Rank genes by mean normalized expression (1 = highest mean)."""
         mean, _ = self._get_mean_var(self.adata_norm.X)
         order = np.argsort(-np.asarray(mean))
         ranks = np.empty(len(order), dtype=int)
@@ -177,14 +141,7 @@ class HVGSelector:
         return ranks
 
     def _mv_lowess_nc(self):
-        """Rank genes by variance above a lowess mean-variance trend.
-
-        Fitted exactly rather than with statsmodels' `delta` interpolation: that
-        approximates the fit and so moves the residuals and the ranking.
-
-        Returns:
-            pandas.Series: Rank per gene, 1 = largest positive residual.
-        """
+        """Rank genes by variance above a lowess mean-variance trend (1 = largest residual)."""
         mean, var = self._get_mean_var(self.adata_norm.X)
         # statsmodels' `delta` is faster but APPROXIMATES the fit, moving the
         # residuals and so the ranking. 0.4s here is not where the time goes;
@@ -201,19 +158,11 @@ class HVGSelector:
     # Log Mean-Variance methods
 
     def _logmv_seurat_v3(self):
-        """Rank genes by scanpy's seurat_v3 variance-stabilizing metric.
-
-        Returns:
-            pandas.Series: Rank per gene.
-        """
+        """Rank genes by scanpy's seurat_v3 variance-stabilizing metric."""
         return self._hvg_scanpy(adata = self.adata_raw, flavor = "seurat_v3")
 
     def _logmv_lognc(self):
-        """Rank genes by variance above a quadratic fit in log-normalized space.
-
-        Returns:
-            pandas.Series: Rank per gene, 1 = largest positive residual.
-        """
+        """Rank genes by variance above a quadratic fit in log-normalized space (1 = largest residual)."""
         mean, var = self._get_mean_var(self.adata_log.X)
         residual = var - np.polyval(np.polyfit(mean, var, deg=2), mean)
         order = np.argsort(-np.asarray(residual))
@@ -225,19 +174,11 @@ class HVGSelector:
     # Dispersion methods
 
     def _disp_seurat(self):
-        """Rank genes by scanpy's normalized dispersion (seurat flavor).
-
-        Returns:
-            pandas.Series: Rank per gene.
-        """
+        """Rank genes by scanpy's normalized dispersion (seurat flavor)."""
         return self._hvg_scanpy(adata = self.adata_log, flavor = "seurat")
 
     def _disp_cellranger(self):
-        """Rank genes by scanpy's normalized dispersion (cell_ranger flavor).
-
-        Returns:
-            pandas.Series: Rank per gene.
-        """
+        """Rank genes by scanpy's normalized dispersion (cell_ranger flavor)."""
         return self._hvg_scanpy(adata = self.adata_log, flavor = "cell_ranger")
 
     # Deviance
@@ -245,18 +186,9 @@ class HVGSelector:
     def _loading_variance(self, fam = 'nb'):
         """Rank genes by their squared loadings on a GLM-PCA fit.
 
-        Not in the default method list: glmpca is a heavy optional dependency, imported
-        lazily so this module stays importable without it.
-
-        Args:
-            fam (str): GLM family passed to glmpca.
-
-        Returns:
-            pandas.Series: Rank per gene.
+        Not in the default method list. glmpca is a heavy optional dependency,
+        imported lazily so this module stays importable without it.
         """
-        # Lazy: glmpca is a heavy optional dependency, and importing it at
-        # module scope would break importing HVGSelector at all where it is
-        # absent -- even for callers who never touch this method.
         from glmpca import glmpca
         model = glmpca.glmpca(Y = self.adata_raw.X.toarray(), L = 5, fam = 'nb')
         loadings = model["loadings"]
@@ -268,11 +200,7 @@ class HVGSelector:
         return ranks
 
     def _deviance_poisson(self):
-        """Rank genes by Poisson deviance from a constant-rate null.
-
-        Returns:
-            pandas.Series: Rank per gene, 1 = largest deviance.
-        """
+        """Rank genes by Poisson deviance from a constant-rate null (1 = largest deviance)."""
         # Densified whole rather than blocked: the gene filter has already run,
         # so this is a few GB. Blocking would change the summation order, shift
         # deviances by ~1e-12, and flip the rank of numerically tied genes --
@@ -289,11 +217,7 @@ class HVGSelector:
         return ranks
 
     def _deviance_nb(self):
-        """Rank genes by negative-binomial deviance, with theta from the mean-variance fit.
-
-        Returns:
-            pandas.Series: Rank per gene, 1 = largest deviance.
-        """
+        """Rank genes by negative-binomial deviance, theta from the mean-variance fit (1 = largest)."""
         # Not blocked, for the reason given in _deviance_poisson.
         X = self.adata_raw.X.toarray() if hasattr(self.adata_raw.X, "toarray") else self.adata_raw.X
         mu = np.asarray(X.mean(axis=0)).flatten()
@@ -318,14 +242,7 @@ class HVGSelector:
         """Order genes by a primary rank, breaking ties on a secondary then by name.
 
         Sorting by name last makes the order deterministic across runs where two genes
-        tie on both scores.
-
-        Args:
-            primary (pandas.Series): Main ordering score, ascending.
-            secondary (pandas.Series or None): Tie-break score.
-
-        Returns:
-            list[str]: Gene names, best first.
+        tie on both scores. Returns gene names, best first.
         """
         df = pd.DataFrame({"primary": primary})
         df["secondary"] = secondary if secondary is not None else 0
@@ -342,18 +259,10 @@ class HVGSelector:
         """Combine every stored method rank into one consensus ranking.
 
         Only genes ranked by *all* methods take part; a gene absent from any method's
-        ranking stays NaN rather than being given a rank it did not earn.
-
-        Args:
-            method (str): 'median' or 'mean' across the per-method ranks.
-            n_hvg (int, optional): Mark this many top genes in `.var['hvg_consensus']`.
-
-        Returns:
-            pandas.Series or tuple: The consensus rank, plus the top gene list when
-                `n_hvg` is given.
-
-        Raises:
-            ValueError: If no rank columns exist, or `method` is unrecognised.
+        ranking stays NaN rather than being given a rank it did not earn. With
+        `n_hvg`, the top genes are marked in `.var['hvg_consensus']` and returned
+        as (consensus rank, top genes); otherwise only the rank is returned.
+        Raises ValueError if no rank columns exist or `method` is unrecognised.
         """
         rank_cols = [c for c in self.adata.var.columns
                      if c.startswith("hvg_") and c.endswith("_rank")]
@@ -395,18 +304,7 @@ class HVGSelector:
         gene identifiers. Missing genes receive G + 1, where G is the number of
         genes ranked in at least one batch. Genes absent from every batch stay
         unranked. Fractional median ranks are preserved for the method consensus.
-
-        Args:
-            func (callable): The bound method to run per batch.
-            batch_key (str): `.obs` column identifying batches.
-            aggregate (str): 'median' or 'mean' across batches.
-            min_cells (int): Detection floor applied separately in every batch.
-
-        Returns:
-            pandas.Series: Aggregated rank per gene, lower is better.
-
-        Raises:
-            ValueError: If `aggregate` is unrecognised.
+        `min_cells` is applied separately in every batch.
         """
         results = {}
         for b in self.adata.obs[batch_key].unique():
@@ -428,13 +326,8 @@ class HVGSelector:
         return agg_rank
 
     def _export_hvg_table(self, outfile: str, batch_key:str ='batch'):
-        """Write every method's ranks and the consensus to a TSV.
-
-        Args:
-            outfile (str | Path): Where to write.
-            batch_key (str, optional): Recorded in the table so the file says which
-                batches it was computed over.
-        """
+        """Write every method's ranks and the consensus to a TSV, with the batches
+        it was computed over when `batch_key` is set."""
         df = self.adata.var.copy()
         rank_cols = [c for c in df.columns if c.endswith("_rank") or c == "consensus_rank"]
         out_df = df[rank_cols].copy()
@@ -453,24 +346,12 @@ class HVGSelector:
     def select_hvg(self, methods: list[str] = None, n_hvg: int = None, min_cells: int = 10, compute_consensus: bool = True, batch_key='batch'):
         """Run the method sweep, build the consensus, and subset the object to it.
 
-        The three normalized views are built once for the whole sweep rather than per
-        method -- that was the single largest cost here. A method that raises is
-        recorded in `self.failed_methods` and dropped: several fit a curve that goes
-        singular on a small or sparse sample, and the consensus is what matters.
-
-        Args:
-            methods (list[str], optional): Method names without the leading underscore.
-                Defaults to the eight-method sweep.
-            n_hvg (int, optional): How many genes to keep; defaults to the
-                constructor's n_hvg. Unranked genes never fill unused slots.
-            min_cells (int): Gene detection floor applied before anything is ranked.
-            compute_consensus (bool): Whether to build the consensus and subset.
-                If false, export method ranks and return the full ranked object.
-            batch_key (str, optional): Rank per batch and aggregate; None ranks the
-                object as one.
-
-        Returns:
-            AnnData: The selected genes, or the full object if compute_consensus=False.
+        `methods` are names without the leading underscore (default: the eight-method
+        sweep). A method that raises is recorded in `self.failed_methods` and
+        dropped from the consensus. Unranked genes never fill unused `n_hvg` slots.
+        `batch_key` ranks per batch and aggregates; None ranks the object as one.
+        Returns the selected genes, or the full ranked object when
+        `compute_consensus` is false.
         """
         n_hvg = self.n_hvg if n_hvg is None else n_hvg
         if not isinstance(n_hvg, (int, np.integer)) or n_hvg < 1:
@@ -492,9 +373,7 @@ class HVGSelector:
         results = {}
         # Methods that raised, kept for the caller and logged.
         self.failed_methods = {}
-        # Built ONCE for the whole sweep: three matrix copies plus a normalize
-        # and a log1p, which rebuilt per method was the largest cost here. Safe
-        # because no method mutates the views' .X. The batched path
+        # Built once for the whole sweep (see initialize_views). The batched path
         # re-initialises per batch, which it must -- different data each time.
         if batch_key is None:
             self.initialize_views(self.adata, min_cells=min_cells)
@@ -517,13 +396,9 @@ class HVGSelector:
             except Exception as e:
                 # Drop the method, keep the consensus. Several of these fit a
                 # curve (loess in logmv_seurat_v3, a negative binomial in the
-                # deviance methods) and go singular on a small or sparse
-                # population -- `2_tip`, 163 cells against 52,689 genes, fails
-                # in exactly that way with an opaque message from the underlying
-                # Fortran. Letting one method abort all eight throws away seven
-                # perfectly good rankings; the whole point of a consensus is
-                # that it does not depend on any single one.
-                #
+                # deviance methods) that goes singular on a small or sparse
+                # population (see docs/decisions/doublet-detection.md, "HVG
+                # selection"); one failure must not throw away the other rankings.
                 # _consensus_hvg_rank reads whichever `hvg_*` columns exist in
                 # .var, so a method that never wrote one simply does not vote.
                 self.failed_methods[method] = str(e)
@@ -551,13 +426,8 @@ class HVGSelector:
             'missing_batch_rank': 'number_of_genes_ranked_in_any_batch_plus_one',
             'compute_consensus': compute_consensus,
         }
-        # batch_key threaded through explicitly: this used to always fall back
-        # to _export_hvg_table's own hardcoded default ('batch'), ignoring
-        # whatever batch_key was passed here. Harmless for every existing
-        # caller (none override batch_key away from 'batch'), but a caller
-        # with no .obs['batch'] column (e.g. a single, unbatched sample) needs
-        # batch_key=None to actually reach _export_hvg_table's own guard
-        # against writing the batches column at all.
+        # batch_key passed through so batch_key=None (a single, unbatched
+        # sample) skips the batches column.
         self._export_hvg_table(outfile = self.outfn, batch_key = batch_key)
         if not compute_consensus:
             return self.adata.copy()

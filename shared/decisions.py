@@ -49,14 +49,9 @@ class DecisionError(ValueError):
 # --------------------------------------------------------------------- build
 
 def _fmt_alternatives(rows, limit=3):
-    """Format candidate rows for a "did you mean" message.
+    """Format candidate rows for a "did you mean" message, cut at 600 characters.
 
-    Args:
-        rows (iterable): Candidates.
-        limit (int): How many to show.
-
-    Returns:
-        str: A short, comma-joined list.
+    `limit` is accepted but not applied.
     """
     return ' | '.join(
         f"{r.po_name} ({r.po_id}; {r.score:.1f})" for r in rows.itertuples())[:600] \
@@ -231,7 +226,7 @@ class Decisions:
         return len(self.mapping)
 
     def __repr__(self):
-        """Short representation naming the source and entry count."""
+        """Short representation: labelled and total entry counts and the source file name."""
         return (f'<Decisions {len(self.labelled)}/{len(self.mapping)} clusters labelled '
                 f'from {Path(self.source).name}>')
 

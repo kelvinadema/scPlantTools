@@ -8,8 +8,8 @@ enums and required keys within a single file -- the same spec the editor sees as
 JSON Schema. The *cross-file* pass checks the things a per-file schema cannot
 express, which is where this pipeline's expensive mistakes actually live: an
 `index_ref` that names nothing, an index built for a different mapper, a
-covariate whose name has drifted out of the `.obs` contract and is therefore
-silently dropped at integrate.py:79 so the model trains without it.
+covariate whose name has drifted out of the `.obs` contract (at run time that
+surfaces only after every sample has been loaded).
 
 The point is to fail in the first second rather than after CellBender has spent
 hours on a GPU node. Everything here is read-only and cheap: no h5ad matrices
@@ -76,28 +76,13 @@ class Report:
 
 
 def _structural(field, data, label, report):
-    """Run the config_spec check for one field and record any errors.
-
-    Args:
-        field: The `config_spec` field descriptor.
-        data: The value to check.
-        label (str): Prefix for the messages.
-        report (Report): Where findings go.
-    """
+    """Run the config_spec check for one field and record any errors."""
     for err in spec.check(field, data, label):
         report.error(err)
 
 
 def _check_paths(paths, label, report, kind='file', severity='error'):
-    """Report any path in `paths` that is missing or empty.
-
-    Args:
-        paths (iterable): Paths to check.
-        label (str): Prefix for the messages.
-        report (Report): Where findings go.
-        kind (str): Noun used in the message ('file' or 'directory').
-        severity (str): 'error' or 'warn'.
-    """
+    """Report any path in `paths` that is missing (or an empty file), as an error or a warning."""
     emit = report.warn if severity == 'warn' else report.error
     for p in paths or []:
         path = Path(str(p))
@@ -108,15 +93,7 @@ def _check_paths(paths, label, report, kind='file', severity='error'):
 
 
 def _read_slot_mismatches(fq1, fq2):
-    """Flag reads whose filename says R1 but which sit in the R2 slot, or vice versa.
-
-    Args:
-        fq1 (list[str]): Paths in the R1 slot.
-        fq2 (list[str]): Paths in the R2 slot.
-
-    Returns:
-        list[str]: One message per mismatched path.
-    """
+    """One message per read whose filename says R1 but which sits in the R2 slot, or vice versa."""
     problems = []
     for slot, paths, wrong, right in (('fastq2', fq2, '_R1', '_R2'), ('fastq1', fq1, '_R2', '_R1')):
         for p in paths or []:
@@ -132,12 +109,6 @@ def _whitelist_paths(extra_args):
     The BD Rhapsody entry stores its three per-block whitelists space-joined in a
     single list element on purpose (BDDataPrepper reads `extra_args[idx + 1]` and
     takes their cartesian product), so the value is split before checking.
-
-    Args:
-        extra_args (list): The mapper's extra argument list.
-
-    Returns:
-        list[str]: Whitelist paths named there.
     """
     found = []
     args = list(extra_args or [])
@@ -159,13 +130,7 @@ def _piscem_version():
 
 
 def _check_index_freshness(name, idx_path, report):
-    """Warn when an index on disk predates the installed piscem.
-
-    Args:
-        name (str): Index name.
-        idx_path (Path): Index directory.
-        report (Report): Where findings go.
-    """
+    """Warn when an index on disk predates the installed piscem."""
     path = Path(idx_path)
     if not path.is_dir():
         return
@@ -199,14 +164,9 @@ def _check_index_freshness(name, idx_path, report):
 
 
 def validate_mapping(pipeline_config_path, report=None, cohort=None):
-    """Validate the mapping stage's whole config tree.
+    """Validate the mapping stage's whole config tree; returns the Report.
 
-    Args:
-        cfg_path (Path): Path to pipeline_config.yaml.
-        report (Report, optional): Reuse an existing report.
-
-    Returns:
-        Report: The findings.
+    `cohort` selects the sample sheet exactly as `mapping.main --cohort` does.
     """
     report = report or Report()
     pipeline_path = Path(pipeline_config_path)
@@ -286,13 +246,6 @@ def _referenced_indexes(samples, mapper_cfg):
     through the same `resolve_index_ref` the sample validator uses, so the two
     cannot disagree. A sample whose index cannot be resolved is skipped here --
     `_validate_samples` already raises precisely for that.
-
-    Args:
-        samples (dict): Resolved sample sheet.
-        mapper_cfg (dict): mapping_config.yaml contents.
-
-    Returns:
-        set[str]: Index names in use.
     """
     referenced = set()
     for entry in (samples or {}).values():
@@ -306,14 +259,7 @@ def _referenced_indexes(samples, mapper_cfg):
 
 
 def _validate_indexes(index_cfg, report, referenced=None):
-    """Check index entries.
-
-    Args:
-        index_cfg (dict): index_config.yaml contents.
-        report (Report): Where findings go.
-        referenced (set[str], optional): Restrict to these; None checks the whole
-            catalogue.
-    """
+    """Check index entries: only those in `referenced`, or the whole catalogue when None."""
     all_indexes = (index_cfg.get('indexes') or {})
     if referenced is not None:
         skipped = sorted(set(all_indexes) - referenced)
@@ -358,11 +304,6 @@ def _check_done_flag_outputs(samples, output_dir, report):
 
     Warns rather than errors: a missing figure is not a reason to refuse to run, and
     the fix is a flag the message names.
-
-    Args:
-        samples (dict): Resolved sample sheet.
-        output_dir (Path): Mapping results root.
-        report (Report): Where findings go.
     """
     expected = {
         'mappingstats.done': [('MappingStats.tsv', '--force-mapextraction'),
@@ -394,14 +335,6 @@ def _already_mapped(sample, mapper, output_dir):
     Used to decide severity, not to skip checks: a sample whose reads have been
     consumed and cached does not need its FASTQs still on disk, so a moved or
     archived file is a warning there and an error for a sample yet to run.
-
-    Args:
-        sample (str): Sample name.
-        mapper (str): Mapper name.
-        output_dir (Path): Mapping results root.
-
-    Returns:
-        bool: Whether mapping is cached as done.
     """
     return (Path(output_dir) / sample / mapper / 'done' / 'mapping.done').exists()
 
@@ -410,15 +343,7 @@ def _validate_samples(samples, mapper_cfg, index_cfg, tech_cfg, qc_cfg, filter_c
                       output_dir, report):
     """Check every sample entry: paths, profiles, mapper gating and collisions.
 
-    Args:
-        samples (dict): Resolved sample sheet.
-        mapper_cfg (dict): mapping_config.yaml contents.
-        index_cfg (dict): index_config.yaml contents.
-        tech_cfg (dict): technology_config.yaml contents.
-        qc_cfg (dict): qc_config.yaml contents.
-        filter_cfg (dict): filter_config.yaml contents.
-        output_dir (Path): Mapping results root, for the cached-sample severity rule.
-        report (Report): Where findings go.
+    `output_dir` (the mapping results root) sets the cached-sample severity rule.
     """
     gated = {}
     seen_fastqs = {}
@@ -551,12 +476,7 @@ def _validate_samples(samples, mapper_cfg, index_cfg, tech_cfg, qc_cfg, filter_c
 
 
 def _validate_cellbender(cellbender_cfg, report):
-    """Check that cellbender.env is a usable conda prefix.
-
-    Args:
-        cellbender_cfg (dict): The `cellbender:` block.
-        report (Report): Where findings go.
-    """
+    """Check that cellbender.env is a usable conda prefix."""
     env = os.environ.get('CELLBENDER_ENV') or cellbender_cfg.get('env')
     if not env:
         report.warn('no cellbender.env configured; "cellbender" will be taken from PATH and its '
@@ -575,14 +495,7 @@ def _validate_cellbender(cellbender_cfg, report):
 
 
 def _env_has_cuda(env: str) -> bool:
-    """Whether a GPU is visible to the interpreter in `prefix`.
-
-    Args:
-        prefix (str): Conda prefix to probe.
-
-    Returns:
-        bool: True if torch there reports CUDA available.
-    """
+    """Whether torch in the conda prefix `env` reports CUDA available."""
     python = Path(env) / 'bin' / 'python'
     if not python.exists():
         return False
@@ -596,12 +509,7 @@ def _env_has_cuda(env: str) -> bool:
 
 
 def _validate_filter_modes(filter_cfg, report):
-    """Check every filter block's `mode` against FILTER_MODES.
-
-    Args:
-        filter_cfg (dict): filter_config.yaml contents.
-        report (Report): Where findings go.
-    """
+    """Check every filter block's `mode` against FILTER_MODES."""
     for profile_name, profile in (filter_cfg.get('QCfilterconfigs') or {}).items():
         if not isinstance(profile, dict):
             continue
@@ -632,11 +540,6 @@ def _validate_sample_type_caps(samples, filter_cfg, report):
     `max_value`/`min_value` mapping would have that cap silently unset -- and those
     absolute caps are the only filtering a flagged sample keeps. Scoped to the `mad`
     block, the only place the mapping is read. See docs/decisions/preflight.md.
-
-    Args:
-        samples (dict): Resolved sample sheet.
-        filter_cfg (dict): filter_config.yaml contents.
-        report (Report): Where findings go.
     """
     configs = filter_cfg.get('QCfilterconfigs') or {}
     if not configs:
@@ -672,13 +575,8 @@ def _validate_doublets(doublets_cfg, filter_cfg, report, sample_names=None):
     """Check the doublet-detection env, but only when a profile asks for it.
 
     Doublet calling is opt-in per filter profile (`solo.mode`), so an absent
-    `doublets:` block is normal and must not warn. See docs/decisions/preflight.md.
-
-    Args:
-        doublets_cfg (dict): The `doublets:` block.
-        filter_cfg (dict): filter_config.yaml contents.
-        report (Report): Where findings go.
-        sample_names (iterable, optional): Used to size the tuning-cost warning.
+    `doublets:` block is normal and must not warn. `sample_names` sizes the
+    tuning-cost warning. See docs/decisions/preflight.md.
     """
     wanted = any(
         (profile.get('filters') or {}).get('solo', {}).get('mode', 'off') != 'off'
@@ -710,11 +608,6 @@ def _validate_doublets(doublets_cfg, filter_cfg, report, sample_names=None):
                      'after mapping has already run.'.format(prefix))
         return
 
-    # A GPU-less node is the failure this catches. The worker asks Lightning for
-    # a GPU accelerator and dies immediately when there is none -- per sample,
-    # after mapping and CellBender have already spent the time, with the real
-    # reason buried in the worker's stderr. Ask once, up front, in the env that
-    # will actually run it.
     # Autotuning is per sample, so its cost scales with the cohort rather than
     # being a fixed overhead. Worth saying out loud before a 40-sample run
     # rather than discovering it from the wall clock.
@@ -728,6 +621,11 @@ def _validate_doublets(doublets_cfg, filter_cfg, report, sample_names=None):
             'only the samples you care about.'.format(
                 trials, ' x {} samples'.format(n_samples) if n_samples else ''))
 
+    # A GPU-less node is the failure this catches. The worker asks Lightning for
+    # a GPU accelerator and dies immediately when there is none -- per sample,
+    # after mapping and CellBender have already spent the time, with the real
+    # reason buried in the worker's stderr. Ask once, up front, in the env that
+    # will actually run it.
     if doublets_cfg.get('use_cuda', True) and not _env_has_cuda(str(prefix)):
         report.error(
             'doublets.use_cuda is on but no GPU is visible to {}. Doublet detection would fail '
@@ -747,12 +645,8 @@ def _obs_columns(input_dir, samples):
     differs between them, since a filter that skipped writes no flag column. Read
     off the HDF5 header via h5py, so no matrix is loaded.
 
-    Args:
-        input_dir (Path): Mapping results root.
-        samples (dict): Resolved sample sheet.
-
-    Returns:
-        dict: {sample: set[str]}.
+    Returns ({sample: set of columns}, description of the source), or
+    (None, reason) when nothing could be read.
     """
     try:
         import h5py
@@ -786,15 +680,7 @@ def _obs_columns(input_dir, samples):
 
 
 def _target_samples(entry, groups):
-    """The sample names one integration target resolves to.
-
-    Args:
-        target (dict): A target entry.
-        groups (dict): The `groups:` block, for expansion.
-
-    Returns:
-        list[str]: Resolved sample names.
-    """
+    """The sample names a target entry lists under Samples, Reference and Query."""
     out = []
     for key in ('Samples', 'Reference', 'Query'):
         try:
@@ -805,16 +691,8 @@ def _target_samples(entry, groups):
 
 
 def validate_integration(integration_config_path, sample_config_path, report=None):
-    """Validate integration_config.yaml against the sample sheet and the .obs contract.
-
-    Args:
-        icfg_path (Path): Path to integration_config.yaml.
-        scfg_path (Path): Path to the sample sheet.
-        report (Report, optional): Reuse an existing report.
-
-    Returns:
-        Report: The findings.
-    """
+    """Validate integration_config.yaml against the sample sheet and the .obs
+    contract; returns the Report."""
     report = report or Report()
     icfg_path = Path(integration_config_path)
 
@@ -922,12 +800,6 @@ def validate_integration(integration_config_path, sample_config_path, report=Non
                     'integration.contrastive.contrast_separation_score instead. '
                     '`early_stopping: true` is the supported use of elbo_validation '
                     'here.'.format(label))
-            # Warned, not errored: the target still trains and its result is
-            # valid -- it is just not corrected for what the config implies.
-            # Checked statically here because this module must stay importable
-            # without the integration env, so it cannot probe scvi directly;
-            # integration.contrastive.module_supports_covariates() does
-            # the version-aware probe at run time and drops them there.
             grid = entry.get('sweep_grid')
             if grid is not None and not isinstance(grid, dict):
                 report.error("{}: 'sweep_grid' must be a mapping of parameter name to a list "
@@ -953,6 +825,12 @@ def validate_integration(integration_config_path, sample_config_path, report=Non
                         'ignored and this target trains once at its stated model_params.'.format(
                             label))
 
+            # Warned, not errored: the target still trains and its result is
+            # valid -- it is just not corrected for what the config implies.
+            # Checked statically here because this module must stay importable
+            # without the integration env, so it cannot probe scvi directly;
+            # integration.contrastive.module_supports_covariates() does
+            # the version-aware probe at run time and drops them there.
             cov = entry.get('covariates')
             if isinstance(cov, dict):
                 named = list(cov.get('categorical') or []) + list(cov.get('continuous') or [])
@@ -1001,9 +879,8 @@ def validate_integration(integration_config_path, sample_config_path, report=Non
                     if not (Path(input_dir) / s / 'manifest.json').exists():
                         unmapped_seen.add(s)
 
-        # An unknown batch_key is not an error at runtime -- the model would
-        # train with NO batch correction while the config says otherwise -- so
-        # the typo is caught here. The stamped columns are accepted without
+        # An unknown batch_key is caught here, before any data is loaded (at run
+        # time the scVI path raises only after loading every sample). The stamped columns are accepted without
         # checking obs_union because the orchestrator writes them during
         # concatenation; the PARTIAL ones are checked explicitly below, since a
         # target mixing declaring and non-declaring samples yields NaN for the
@@ -1012,7 +889,7 @@ def validate_integration(integration_config_path, sample_config_path, report=Non
         _STAMPED_OBS = ('batch', 'sample', 'tech', 'sample_type', 'prep', 'treatment', 'time_h')
         _PARTIAL_STAMPED_OBS = ('prep', 'treatment', 'time_h')
 
-        # Label-space keys (2026-09-10; docs/decisions/two-layer-label-spaces.md).
+        # Label-space keys (docs/decisions/two-layer-label-spaces.md).
         if 'layer' in entry:
             try:
                 parse_layer(entry['layer'])
@@ -1129,16 +1006,14 @@ def validate_integration(integration_config_path, sample_config_path, report=Non
         if covariates and obs_per_sample is not None:
             if isinstance(covariates, str):
                 covariates = [covariates]
-            # Both accepted shapes reduce to one flat list of column names. The
-            # object form ({categorical: [...], continuous: [...]}) was rejected
-            # by config_spec until 2026-08-17; walking it as a plain list here
-            # checked for .obs columns literally named 'categorical'.
+            # Both accepted shapes -- a list, or {categorical: [...],
+            # continuous: [...]} -- reduce to one flat list of column names.
             if isinstance(covariates, dict):
                 parsed = parse_covariates(covariates)
                 covariates = list(parsed['categorical']) + list(parsed['continuous'])
             for cov in covariates:
                 # Stamped columns are written onto .obs at concatenation time
-                # (orchestrator.py:210-225) and are legitimately absent from
+                # (IntegrationManager._concatenate_adata) and are legitimately absent from
                 # every per-sample h5ad. Held to the same allowance batch_key
                 # already gets a few lines above.
                 if cov in _STAMPED_OBS:
@@ -1170,14 +1045,7 @@ def validate_integration(integration_config_path, sample_config_path, report=Non
 
 
 def emit_schemas(out_dir):
-    """Regenerate `configs/schemas/*.schema.json` from config_spec.
-
-    Args:
-        out_dir (Path, optional): Where to write; defaults to configs/schemas.
-
-    Returns:
-        list[Path]: The files written.
-    """
+    """Write `<stem>.schema.json` for every config_spec spec into `out_dir`; returns the paths."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     written = []

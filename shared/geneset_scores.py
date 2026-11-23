@@ -6,7 +6,7 @@ One scorer for all six marker methods, deliberately. The methods differ in how
 they *find* genesets; if they also differed in how those genesets are turned
 into per-cell scores, a difference in the final annotation could not be
 attributed to either. Only `hotspot` emits a native per-cell module score
-anyway (`markerid/methods.py:141`) -- `lmd` and `cfmf` do not, despite
+anyway (`run_hotspot` in markerid/methods.py) -- `lmd` and `cfmf` do not, despite
 also being cluster-free -- so a uniform scorer is less code than special-casing,
 not more.
 
@@ -29,8 +29,8 @@ import scanpy as sc
 
 logger = logging.getLogger('AnnotationLogging')
 
-# Cells below this fraction of a geneset's genes being detected are not scored
-# for it; a score built on two observed genes is noise wearing a number.
+# Minimum genes a geneset needs (in the marker file, and present in the object)
+# to be scored at all; a score built on two observed genes is noise wearing a number.
 DEFAULT_MIN_GENES = 3
 
 

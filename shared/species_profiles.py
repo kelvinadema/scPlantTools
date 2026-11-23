@@ -1,11 +1,8 @@
 """
 One annotation config, several target species.
 
-WHY THIS EXISTS. There were three files -- `annotation_config.yaml`,
-`annotation_config_arabidopsis.yaml`, `annotation_config_zea_mays.yaml` --
-totalling 1,130 lines, of which **73 of 117 keys were identical across all
-three**. Every change to a shared parameter had to be made three times, and
-nothing checked that it was. The four things that genuinely differ are:
+Most annotation settings are shared across target species. The four things
+that genuinely differ per species are:
 
     target_species          which species is being annotated
     target_species_files    its proteome / annotation / marker paths + gene_id rule
@@ -13,10 +10,9 @@ nothing checked that it was. The four things that genuinely differ are:
     reference_species       the same pool minus the target (you do not reference
                             yourself), which is derivable rather than declared
 
-So the three files are one config plus a small per-species profile. This module
-resolves `merged config + species name` back into exactly the dict the old
-per-species file produced -- `tests/test_species_profiles.py` asserts that
-equality against the originals, which is what makes the merge safe to trust.
+So the config holds one shared block plus a small per-species profile, and
+this module resolves `config + species name` into the single-species dict the
+annotation stage reads.
 
 Kept free of stage imports: `shared/validate.py` uses it during preflight.
 """
@@ -38,18 +34,17 @@ def profile_names(acfg: dict) -> list:
 
 def resolve_species(acfg: dict, species: str = None) -> dict:
     """
-    Return a config with one species' profile folded in, shaped exactly like the
-    old single-species files.
+    Return a config with one species' profile folded in, in single-species shape.
 
-    With no `species_profiles:` block this is the identity, so a config in the
-    old shape still works. With one, `species` (or `default_species:`) selects a
+    With no `species_profiles:` block this is the identity, so a single-species
+    config still works. With one, `species` (or `default_species:`) selects a
     profile; omitting both is an error rather than a guess -- picking the wrong
     target species silently would send OrthoFinder at the wrong proteome set and
     produce annotations against the wrong reference pool.
 
-    `reference_species` is the declared pool **minus the resolved target**. That
-    is the rule the three original files followed by hand, and deriving it here
-    means adding a species to the pool cannot be forgotten in two of three files.
+    `reference_species` is the declared pool **minus the resolved target**
+    (you do not reference yourself), derived here rather than declared per
+    species.
     """
     root = acfg.get('AnnotateConfigs') or {}
     profiles = root.get('species_profiles') or {}

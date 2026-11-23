@@ -1,25 +1,16 @@
 """
 Named cohorts -- which dataset a mapping run operates on.
 
-WHY THIS EXISTS. `pipeline_config.yaml`'s `configs.samples` is a single pointer
-to a sample sheet, so
-
-    python -m mapping.main -c configs/pipeline_config.yaml
-
-is byte-identical whether it is about to map the 40-sample Medicago cohort or
-the external Arabidopsis/maize reference set. Which one you get depends on a
-line inside a file the command never names, and switching cohorts means editing
-that line and remembering to put it back. That is the whole failure mode this
-module removes: **the command now says what it runs on.**
+`configs.samples` alone is a single pointer to a sample sheet, so the command
+line would not say which dataset it maps. A `cohorts:` block lets it:
 
     python -m mapping.main --cohort medicago
     python -m mapping.main --cohort external
 
-BACKWARD COMPATIBLE BY DESIGN. A `pipeline_config.yaml` with no `cohorts:` block
-behaves exactly as before and `--cohort` is rejected. A config WITH the block
-resolves `--cohort`, falling back to `default_cohort:` when the flag is omitted,
-and errors listing the valid names when neither is available. Nothing silently
-picks a cohort for you.
+A `pipeline_config.yaml` with no `cohorts:` block uses `configs.samples`, and
+`--cohort` is rejected. A config WITH the block resolves `--cohort`, falling
+back to `default_cohort:` when the flag is omitted, and errors listing the valid
+names when neither is available. Nothing silently picks a cohort for you.
 
 WHAT A COHORT MAY OVERRIDE. `samples` (required) and `output_dir` (optional).
 Deliberately not the other sub-configs: qc/filter/technology settings are

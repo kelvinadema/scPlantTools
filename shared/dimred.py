@@ -2,16 +2,9 @@
 
 """
 Shared dimensionality-reduction/clustering (neighbors -> leiden -> UMAP) and UMAP
-plotting, factored out so mapping QC, integration, and (structurally) annotation
-share one correct implementation instead of three independent ones.
+plotting, shared by mapping QC, integration and refine.
 
-Root cause this replaces: `mapping/qc_plot.py`'s old `_plot_umap` computed
-a PCA embedding and ran the standalone `umap-learn` package on it directly, then
-*separately* ran `sc.pp.neighbors`/`sc.tl.leiden` on an unrelated representation
-purely to generate cluster-color labels for the already-fixed scatter -- so
-leiden's neighbor graph had nothing to do with what UMAP actually embedded.
-
-Here, exactly one `sc.pp.neighbors(key_added=...)` call builds the graph, and
+Exactly one `sc.pp.neighbors(key_added=...)` call builds the graph, and
 both `sc.tl.umap` and `sc.tl.leiden` are pointed at that same `neighbors_key`,
 so the embedding and the clustering are always computed from the same graph.
 """
@@ -35,19 +28,12 @@ def _mds_placeholder(distances, n_components=10, random_state=42):
     """
     Cheap classical-MDS embedding straight from a precomputed distance matrix.
 
-    Written into `adata.obsm['X_pca']` purely so `sc.tl.umap` doesn't fall back
-    to running a full PCA on `.X`: `sc.tl.umap` always resolves *some*
-    representation via scanpy's `_choose_representation` to check the neighbor
-    graph's connected components for its initialisation strategy (see
-    `scanpy/tools/_utils.py::_get_pca_or_small_x`) -- when `sc.pp.neighbors`
-    was given `distances=` directly, its recorded params carry no `use_rep`,
-    so with no cached `X_pca` present, scanpy silently runs `sc.pp.pca` on the
-    full (possibly huge) gene expression matrix just to get one. This is much
-    cheaper: an MDS embedding of the n x n distance matrix already in hand,
-    not a fresh PCA of n x n_genes -- and it uses the `X_pca` key name only
-    because that's the key scanpy's own fallback-avoidance checks for, not
-    because this is an actual PCA of gene expression; confined to the
-    throwaway per-call AnnData copies the `distances` mode operates on.
+    Written into `adata.obsm['X_pca']` purely so `sc.tl.umap` does not fall back
+    to a full PCA of `.X`: it always resolves some representation for its
+    initialisation (scanpy/tools/_utils.py::_get_pca_or_small_x), and a graph
+    built from `distances=` records no `use_rep`. The `X_pca` name is only the key
+    scanpy checks for; this is not a PCA of gene expression, and it lives only on
+    the throwaway per-call copies the `distances` mode operates on.
     """
     n = distances.shape[0]
     k = min(n_components, n - 1)
@@ -93,10 +79,8 @@ def load_cached_hvg(staged, hvg_outfn, n_hvg, logger):
         logger.warning('[DimReducer] Cached HVG file {} has no usable gene column -- recomputing.'.format(path))
         return None
 
-    # Build the lookup once. Inlining `set(staged.var_names)` into the
-    # comprehension rebuilt it for every candidate gene -- 52,689 genes against
-    # a 52,689-element set is ~2.8e9 operations, which turned a cache *hit* into
-    # 13 minutes, far slower than the ~7s selection it was meant to avoid.
+    # Build the lookup once: rebuilding it per candidate gene made a cache hit
+    # (13 min at 52,689 genes) far slower than the ~7 s selection it replaces.
     known = set(staged.var_names)
     genes = [g for g in table[column].astype(str).tolist() if g in known]
     if len(genes) < min(n_hvg, staged.n_vars) * 0.5:
@@ -120,10 +104,7 @@ def _choose_n_pcs_by_variance(X, variance_cutoff=0.9):
     Dispatches on sparsity/size: a small-enough sparse matrix is densified for
     exact `PCA`; a large sparse matrix uses `TruncatedSVD` (which never needs
     (and cannot efficiently take) a dense copy); a dense matrix always uses
-    `PCA` directly. Every branch must assign `model` -- a prior version of
-    this had no `else` for the plain-dense case, leaving `model` unassigned
-    and raising `UnboundLocalError` at `model.fit(X)` below; dense input is
-    latent-but-real here (not every caller's input layer is guaranteed sparse).
+    `PCA` directly. Returns (n_pcs, fitted model).
     """
     if sparse.issparse(X):
         if min(X.shape) < 500:
@@ -151,15 +132,7 @@ class DimReducer:
         self.logger = logger or logging.getLogger('SingleCellMappingPipeline')
 
     def _resolve_n_neighbors(self, n_neighbors, n_obs):
-        """Clamp `n_neighbors` to something the cell count can support.
-
-        Args:
-            n_neighbors (int or None): Requested value.
-            n_obs (int): Cells available.
-
-        Returns:
-            int: The value actually used.
-        """
+        """`n_neighbors` if given, else round(sqrt(n_obs)) clamped to [2, n_obs - 1]."""
         if n_neighbors is not None:
             return n_neighbors
         raw = int(round(np.sqrt(n_obs)))
@@ -175,19 +148,13 @@ class DimReducer:
         No ready-made representation exists (mapping QC's normal case): select
         HVGs, then PCA on the HVG-subset object, writing the result into the
         real `adata.obsm['X_pca']` so `sc.pp.neighbors(use_rep='X_pca')` and any
-        other downstream scanpy call finds it the standard way -- the old
-        `_prepare_umap_input` only ever returned a bare, unattached array.
-
-        HVG selection goes through `HVGSelector` (`shared/hvg.py`,
-        the same consensus-rank selector integration already uses), not
-        scanpy's `highly_variable_genes` -- per explicit instruction, replacing
-        the earlier single-flavor approach.
+        other downstream scanpy call finds it the standard way. HVGs come from the
+        consensus `HVGSelector` (shared/hvg.py), not scanpy's
+        `highly_variable_genes`. Returns the number of PCs used.
         """
         staged = adata.copy()
-        # HVGSelector's own `layer` constructor kwarg is accepted but never
-        # actually read by any of its methods (verified by reading the class) --
-        # every method operates on `.X` directly. Stage it here rather than
-        # relying on that kwarg to do anything.
+        # HVGSelector accepts a `layer` argument but every method reads `.X`, so
+        # the layer is staged into .X here.
         staged.X = staged.layers[layer].copy()
 
         if do_hvg:
@@ -353,16 +320,7 @@ class UMAPPlotter:
         self.logger = logger or logging.getLogger('SingleCellMappingPipeline')
 
     def _save_plot(self, plot, name, prefix="plot", dpi=600, width=6, height=4):
-        """Write a figure to `{save_dir}/{prefix}_{name}.png`.
-
-        Args:
-            plot (plotnine.ggplot): The figure.
-            name (str): Filename stem after the prefix.
-            prefix (str): Filename prefix.
-            dpi (int): Output resolution.
-            width (float): Inches.
-            height (float): Inches.
-        """
+        """Write a figure to `{save_dir}/{prefix}_umap_{name}.png` (width/height in inches)."""
         self.save_dir.mkdir(parents=True, exist_ok=True)
         filename = self.save_dir / f"{prefix}_umap_{name}.png"
         plot.save(filename=str(filename), dpi=dpi, width=width, height=height)
@@ -371,9 +329,7 @@ class UMAPPlotter:
         """
         Numeric -> min-max scaled + a light-to-red gradient; exactly-2-level
         categorical -> a fixed black/red discrete scale; anything else -> the
-        default discrete palette. Dedupes the branching that used to be
-        implemented separately in `qc_plot.py::_plot_umap` and
-        `shared/plot.py::scPlotter.plot_umap`.
+        default discrete palette. Returns (colour values, scale or None).
         """
         if pd.api.types.is_numeric_dtype(series):
             scaled = MinMaxScaler().fit_transform(series.to_numpy().reshape(-1, 1)).ravel()
@@ -383,17 +339,7 @@ class UMAPPlotter:
         return series, None
 
     def _scatter(self, base_df, color_values, title, color_scale):
-        """One UMAP scatter, coloured by the given values.
-
-        Args:
-            base_df (pandas.DataFrame): Frame carrying the two UMAP axes.
-            color_values (pandas.Series): Per-cell colour values.
-            title (str): Figure title.
-            color_scale: A plotnine scale, or None to let plotnine choose.
-
-        Returns:
-            plotnine.ggplot: The figure.
-        """
+        """One UMAP scatter, coloured by the given values (`color_scale` None lets plotnine choose)."""
         df = base_df.copy()
         df["color"] = color_values
         p = (ggplot(df, aes("UMAP1", "UMAP2", color="color"))
@@ -406,21 +352,11 @@ class UMAPPlotter:
 
     def plot(self, umap_key, leiden_key, extra_color_by=None, color=None,
              title_prefix="UMAP", prefix="plot", save=True, size=1.2, alpha=0.6):
-        """Draw the UMAP coloured by cluster and by any extra columns asked for.
+        """Draw the UMAP coloured by cluster and by any extra `.obs` columns asked for.
 
-        Args:
-            umap_key (str): `.obsm` key holding the 2-D embedding.
-            leiden_key (str): `.obs` column holding cluster labels.
-            extra_color_by (list[str], optional): Further `.obs` columns to colour by.
-            color (str, optional): A single column to colour by instead.
-            title_prefix (str): Prefix for each figure title.
-            prefix (str): Filename prefix.
-            save (bool): Whether to write the PNGs.
-            size (float): Point size.
-            alpha (float): Point alpha.
-
-        Returns:
-            list[plotnine.ggplot]: The figures, in the order drawn.
+        `color` is an extra per-cell array (not an `.obs` column), drawn as one
+        more panel. Missing columns are skipped with a warning; with nothing to
+        colour by, a plain scatter is drawn. Returns the figures in drawing order.
         """
         self._size, self._alpha = size, alpha
         adata = self.adata

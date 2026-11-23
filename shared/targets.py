@@ -62,17 +62,7 @@ def _resolve_extends(raw: str, source: Path) -> Path:
     environment. The batch scripts export it, but the interactive case --
     `python -m integration.main --icfg <chapter file>` from the repo root -- has
     no reason to, and the code resolving the config is already running inside
-    the tree the variable names.
-
-    Args:
-        raw (str): The `extends:` value as written.
-        source (Path): The config file that wrote it.
-
-    Returns:
-        Path: The base config's path.
-
-    Raises:
-        TargetConfigError: If an expansion leaves an unresolved `${VAR}`.
+    the tree the variable names. An unresolved `${VAR}` raises TargetConfigError.
     """
     env = dict(os.environ)
     if not env.get('SCRNASEQ_ROOT'):
@@ -98,17 +88,8 @@ def load_integration_config(path, _seen=None) -> dict:
     raises; `defaults` merges per key with the overlay winning; every other key
     the overlay states replaces the base's. The returned dict carries no
     `extends` key, so every consumer downstream sees one flat config and cannot
-    tell an overlay from a standalone file.
-
-    Args:
-        path (str | Path): The config to load. May itself be a base.
-        _seen (tuple, optional): Internal, for cycle detection.
-
-    Returns:
-        dict: The merged config.
-
-    Raises:
-        TargetConfigError: On a missing base, a cycle, or a name defined twice.
+    tell an overlay from a standalone file. Raises TargetConfigError on a missing
+    base, a cycle, or a name defined twice.
     """
     from .utils import load_config          # deferred: shared/utils imports yaml
 
@@ -167,18 +148,8 @@ def expand_group(name, groups, _seen=None):
     """Resolve one name to a list of sample names, following nested groups.
 
     A name that is not a group resolves to itself -- that is what lets
-    `Samples: ['tip_protoplast', 'nMOCK']` mix a group with a bare sample.
-
-    Args:
-        name (str): Group or sample name.
-        groups (dict): The `groups:` block.
-        _seen (tuple): Internal, for cycle detection.
-
-    Returns:
-        list[str]: Sample names.
-
-    Raises:
-        TargetConfigError: If a group references itself.
+    `Samples: ['tip_protoplast', 'nMOCK']` mix a group with a bare sample. A
+    group that references itself raises TargetConfigError.
     """
     _seen = _seen or ()
     if name in _seen:
@@ -198,15 +169,7 @@ def expand_group(name, groups, _seen=None):
 
 
 def expand_sample_list(value, groups):
-    """Expand a Samples/Reference/Query value, de-duplicated, order preserved.
-
-    Args:
-        value (str | list | None): The value as written.
-        groups (dict): The `groups:` block.
-
-    Returns:
-        list[str] or None: Sample names, or None if `value` was None.
-    """
+    """Expand a sample-list value (str, list or None), de-duplicated, order preserved."""
     if value is None:
         return None
     if isinstance(value, str):
@@ -227,17 +190,7 @@ def resolve_target(config: dict, target: str) -> dict:
 
     The returned dict is a copy, so a caller may mutate it without touching the
     loaded config. A key present but null is treated as unstated unless it is in
-    NULLABLE_KEYS.
-
-    Args:
-        config (dict): The whole integration config.
-        target (str): Target name.
-
-    Returns:
-        dict: The resolved entry.
-
-    Raises:
-        TargetConfigError: If the target is not in the config.
+    NULLABLE_KEYS. An unknown target raises TargetConfigError.
     """
     targets = config.get('IntegrateConfigs') or {}
     if target not in targets:
@@ -261,14 +214,7 @@ def resolve_target(config: dict, target: str) -> dict:
 
 
 def resolve_all(config: dict) -> dict:
-    """Every target in the config, resolved. Useful for validation and listing.
-
-    Args:
-        config (dict): The whole integration config.
-
-    Returns:
-        dict: {target name: resolved entry}.
-    """
+    """{target name: resolved entry} for every target in the config."""
     return {name: resolve_target(config, name)
             for name in (config.get('IntegrateConfigs') or {})}
 
@@ -291,16 +237,10 @@ DEFAULT_BATCH_KEY = 'batch'
 
 
 def parse_covariates(raw):
-    """Normalize a target's `covariates:` into categorical and continuous lists.
+    """Normalize a target's `covariates:` into {'categorical': [...], 'continuous': [...]}.
 
-    Args:
-        raw: The `covariates:` block, in any of its accepted shapes.
-
-    Returns:
-        dict: {'categorical': list[str], 'continuous': list[str]}.
-
-    Raises:
-        TargetConfigError: If the block is malformed.
+    Accepts None, a list (all continuous) or a mapping; anything else raises
+    TargetConfigError.
     """
     if raw is None:
         return {'categorical': [], 'continuous': []}
@@ -317,17 +257,8 @@ def parse_layer(raw):
 
     None (unstated) keeps the historical default, `corrected_counts`, which the
     integrator supplies. Two layers mean "train on both as separate features";
-    see docs/decisions/two-layer-label-spaces.md.
-
-    Args:
-        raw: The `layer:` value as written -- a string, a list of one or two
-            strings, or None.
-
-    Returns:
-        list[str] or None: The layer names.
-
-    Raises:
-        TargetConfigError: On an empty, non-string, repeated or too-long list.
+    see docs/decisions/two-layer-label-spaces.md. An empty, non-string,
+    repeated or too-long value raises TargetConfigError.
     """
     if raw is None:
         return None
@@ -359,17 +290,8 @@ def expand_env_path(raw, key='path'):
 
     Same expansion `extends:` gets, so a chapter overlay can write
     `${SCRNASEQ_ROOT}/...` or `${SC_NOTEBOOKS}/...` rather than one machine's
-    layout. An unexpanded variable is an error, not a literal path.
-
-    Args:
-        raw (str or None): The value as written.
-        key (str): The key name, for the error message.
-
-    Returns:
-        str or None: The expanded path.
-
-    Raises:
-        TargetConfigError: If a `${VAR}` is left unexpanded, or the value is not a string.
+    layout. An unexpanded variable or a non-string value raises
+    TargetConfigError; `key` names the field in the message.
     """
     if raw is None:
         return None
@@ -410,20 +332,14 @@ def parse_batch_key(raw, groups=None):
 
     Four forms -- a column name, null, a list to combine, or a mapping resolved per
     sample. See docs/decisions/batch-keys-and-confounds.md for what each is for and
-    why a sample claimed by two mapping entries is an error.
+    why a sample claimed by two mapping entries is an error. `groups` is needed
+    only for the mapped form.
 
-    Args:
-        raw: The `batch_key:` value as written.
-        groups (dict, optional): The `groups:` block, for the mapped form.
-
-    Returns:
-        dict: 'mode' ('none'|'single'|'combined'|'mapped'), 'column' (the .obs
-            column the model will use, or None), 'components' (every key
-            referenced, for validation), and 'assignments' ({sample: (key, ...)}
-            for mapped, else None).
-
-    Raises:
-        TargetConfigError: On an empty, malformed or overlapping specification.
+    Returns a dict with 'mode' ('none'|'single'|'combined'|'mapped'), 'column'
+    (the .obs column the model will use, or None), 'components' (every key
+    referenced, for validation), and 'assignments' ({sample: (key, ...)} for
+    mapped, else None). An empty, malformed or overlapping specification raises
+    TargetConfigError.
     """
     if raw is None:
         return {'mode': 'none', 'column': None, 'components': (), 'assignments': None}
@@ -478,18 +394,7 @@ def parse_batch_key(raw, groups=None):
 
 
 def _batch_key_list(raw, label):
-    """Validate one list of batch key names: non-empty strings, no duplicates.
-
-    Args:
-        raw (list): Keys as written.
-        label (str): Prefix for the error messages.
-
-    Returns:
-        list[str]: The validated keys.
-
-    Raises:
-        TargetConfigError: If empty, non-string, or containing duplicates.
-    """
+    """Validate one list of batch key names: non-empty strings, no duplicates."""
     if raw is None:
         raise TargetConfigError('{}: no keys given.'.format(label))
     keys = list(raw)
@@ -513,17 +418,8 @@ def resolve_batch_assignments(spec, samples):
 
     Separate from `parse_batch_key` because coverage can only be judged against the
     target's own resolved sample list, which the parser does not see. Raises rather
-    than falling back to a default key.
-
-    Args:
-        spec (dict): As returned by `parse_batch_key`.
-        samples (list[str]): The target's resolved samples.
-
-    Returns:
-        dict or None: {sample: (key, ...)}, or None when the mode is not 'mapped'.
-
-    Raises:
-        TargetConfigError: If any sample is uncovered.
+    than falling back to a default key. Returns None when the mode is not
+    'mapped'; an uncovered sample raises TargetConfigError.
     """
     if spec.get('mode') != 'mapped':
         return None
@@ -539,19 +435,7 @@ def resolve_batch_assignments(spec, samples):
 
 
 def _require(cfg, target, key):
-    """Fetch a key a method requires, raising if it is missing or empty.
-
-    Args:
-        cfg (dict): The resolved target.
-        target (str): Target name, for the error message.
-        key (str): Key to fetch.
-
-    Returns:
-        The value.
-
-    Raises:
-        TargetConfigError: If the key is absent or falsy.
-    """
+    """Fetch a key a method requires; TargetConfigError if it is absent or empty."""
     value = cfg.get(key)
     if not value:
         raise TargetConfigError("target '{}': method='{}' requires '{}'.".format(
@@ -565,12 +449,6 @@ def _train_args(cfg) -> dict:
     Built as a dict rather than a scalar so further train() kwargs get an obvious
     home. Kept import-free of scvi/anndata: preflight resolves specs outside the
     integration env.
-
-    Args:
-        cfg (dict): The resolved target.
-
-    Returns:
-        dict: kwargs for `model.train()`, including `plan_kwargs` when set.
     """
     train_args = {}
     if cfg.get('max_epochs') is not None:
@@ -591,18 +469,8 @@ def resolve_run_spec(config: dict, target: str) -> dict:
     therefore happen" -- defaults applied, groups expanded, code-level defaults
     filled in. Deliberately free of scvi/anndata imports: the model class is *named*
     here and resolved to a class by the caller, so preflight can resolve a full spec
-    outside the integration env.
-
-    Args:
-        config (dict): The whole integration config.
-        target (str): Target name.
-
-    Returns:
-        dict: Everything the orchestrator needs, including 'method', 'samples',
-            'covariates', 'batch_key' and 'batch_key_spec'.
-
-    Raises:
-        TargetConfigError: If the method is missing or unsupported.
+    outside the integration env. A missing or unsupported method raises
+    TargetConfigError.
     """
     cfg = resolve_target(config, target)
     _batch_spec = parse_batch_key(cfg.get('batch_key', DEFAULT_BATCH_KEY),

@@ -1,19 +1,16 @@
 """
 Read back what a run actually produced.
 
-WHY THIS EXISTS. The pipeline already writes rich state: per-step `.done` flags,
-per-sample `manifest.json` carrying schema version, config hash, tool versions
-and the artifact map, and the integration registry keyed by target. Until this
-module there was no way to *read* any of it -- answering "what stage is SMu006
-at?" or "which targets are trained?" meant `ls`-ing around `results/`.
+The stages write per-step `.done` flags, per-sample `manifest.json` files
+(schema version, config hash, tool versions, artifact map) and the integration
+registry keyed by target; this module reads them back for `sc status`.
 
 Nothing here computes anything. It reads files the stages already write, which
 is why it needs no pipeline dependencies and runs in any environment.
 
 COVERAGE IS UNEVEN, AND SAYS SO. Mapping routes every terminal write through
 `shared/io.py`, so its state is complete: step flags plus a manifest. Integration
-and annotation still do their IO ad hoc (see CLAUDE.md), so this reports what it
-can see on disk -- a target directory and a registry entry -- and marks the rest
+and annotation do their IO ad hoc, so this reports what it can see on disk -- a target directory and a registry entry -- and marks the rest
 `unknown` rather than implying absence. A missing manifest means "this stage
 does not write one yet", not "this did not run", and the two must not look alike.
 """
@@ -34,14 +31,7 @@ MISSING = '-'
 
 
 def _read_json(path: Path):
-    """Read a JSON file, returning {} when it is absent or unreadable.
-
-    Args:
-        path (Path): The file.
-
-    Returns:
-        dict: The parsed contents.
-    """
+    """Parse a JSON file; None when it is absent or unreadable."""
     try:
         return json.loads(path.read_text())
     except Exception:
@@ -100,8 +90,8 @@ def integration_status(output_dir) -> dict:
     for entry in registry:
         if isinstance(entry, dict):
             # `dataset_id` is the key CacheUtils writes and looks up by
-            # (integrationutils.py::find_entry); the others are tolerated in case an
-            # older registry is still around.
+            # (integrationutils.py::find_entry); the others are tolerated for
+            # registries written with older key names.
             name = (entry.get('dataset_id') or entry.get('target')
                     or entry.get('name') or entry.get('integration_name'))
             if name:

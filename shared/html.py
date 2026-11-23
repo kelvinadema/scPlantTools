@@ -111,14 +111,7 @@ def _esc(value) -> str:
 
 
 def _fmt_int(value) -> str:
-    """Format an integer with thousands separators, or an em dash if unknown.
-
-    Args:
-        value: The value.
-
-    Returns:
-        str: HTML-safe text.
-    """
+    """Format an integer with thousands separators, or an em dash if unknown."""
     try:
         return '{:,}'.format(int(value))
     except (TypeError, ValueError):
@@ -126,15 +119,7 @@ def _fmt_int(value) -> str:
 
 
 def _fmt_float(value, digits: int=3) -> str:
-    """Format a float to `digits` places, or an em dash if unknown.
-
-    Args:
-        value: The value.
-        digits (int): Decimal places.
-
-    Returns:
-        str: HTML-safe text.
-    """
+    """Format a float to `digits` places, or an em dash if unknown."""
     try:
         if value is None:
             return '&mdash;'
@@ -158,15 +143,7 @@ def _embed_png(path: Path) -> str:
 
 
 def _figure(path: Path, caption: str) -> str:
-    """A figure block, or a "not available" note when the file is absent.
-
-    Args:
-        path (Path): The image.
-        caption (str): Caption text.
-
-    Returns:
-        str: HTML fragment.
-    """
+    """An HTML figure block with the PNG inlined, or a "not available" note when the file is absent."""
     uri = _embed_png(path)
     if not uri:
         return '<p class="missing">Figure not available: {}</p>'.format(html.escape(Path(path).name))

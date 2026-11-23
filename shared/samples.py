@@ -3,17 +3,11 @@
 """
 Single resolution point for the sample sheet.
 
-Every stage used to do `load_config(path)['samples']` in its own __init__ --
-nine independent sites (mapping, preprocess, mappingutils, qc_metrics,
-qc_filter, qc_plot, report, mapping's main, and integration's orchestrator),
-each re-parsing the YAML and each applying its own `.get('mapper', '')`
-fallback. Once the sheet grew a `defaults:` block that had to be merged in,
-that stopped being merely wasteful: applying defaults in only some of those
-sites would leave the rest reading an unresolved entry, falling back to
-`mapper=''`, and handing that empty string to
-`get_sample_output_paths(mapper=...)` -- which would silently place the stage's
-outputs in a *different* directory than the one mapping wrote to, with no
-error anywhere. So there is exactly one loader and everyone calls it.
+Every stage loads samples through here, so the sheet's `defaults:` block is
+merged identically everywhere. A site that read an unresolved entry would fall
+back to `mapper=''`, and `get_sample_output_paths(mapper=...)` would then
+silently place its outputs in a different directory than the one mapping wrote
+to.
 
 `mapper` is required rather than defaulted for the same reason: an entry that
 reaches `get_sample_output_paths` without one is unrecoverable, so it is worth
@@ -28,7 +22,7 @@ from .utils import load_config
 
 # Parsed sheets, keyed by (resolved path, mtime). The mtime is in the key so an
 # edited sheet is re-read rather than served stale; within one run the file does
-# not change, so this collapses the nine loads per sample into one parse.
+# not change, so every stage's load of a sample shares one parse.
 _SAMPLE_CACHE = {}
 
 
@@ -46,7 +40,7 @@ def _apply_defaults(defaults: dict, entry: dict) -> dict:
     list key replaces the default list rather than extending it.
 
     A key present but null in a sample entry counts as *absent*, matching
-    `SingleCellMapper._merge_mapper_defaults`, which has always treated
+    `SingleCellMapper._merge_mapper_defaults`, which treats
     `self.config[key] is None` as unset. A sample therefore cannot null out a
     default; omit the key from `defaults:` and state it per sample instead.
     """
@@ -134,12 +128,8 @@ def resolve_index_ref(sample_entry: dict, mapper_cfg: dict):
 
     Returns None when neither supplies one; callers decide whether that is
     fatal (`SingleCellMapper._resolve_index`) or merely nothing to build
-    (`build_required_index`).
-
-    This exists because those two callers previously implemented the lookup
-    separately and had already drifted: `build_required_index` consulted only
-    the profile, so a sample carrying a direct `index_ref` mapped correctly but
-    was invisible to `--build-indexes` and its index was never built.
+    (`build_required_index`). Both go through here so that `--build-indexes`
+    builds exactly the index a sample maps against.
     """
     direct = sample_entry.get('index_ref')
     if direct:

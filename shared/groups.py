@@ -103,11 +103,7 @@ class GroupDocument:
 
     @property
     def named(self):
-        """The groups that carry a label, i.e. the ones that seed anything.
-
-        Returns:
-            list: The labelled groups.
-        """
+        """{group_id: group} for the groups that carry a PO label."""
         return {gid: g for gid, g in self.groups.items() if g.get('po_id')}
 
     @property
@@ -116,11 +112,7 @@ class GroupDocument:
         return {gid: g for gid, g in self.groups.items() if not g.get('po_id')}
 
     def methods(self):
-        """Every marker method referenced by any group.
-
-        Returns:
-            list[str]: Method names.
-        """
+        """Every marker method referenced by any grouped, dropped or ungrouped geneset, sorted."""
         return sorted({m for g in self.groups.values() for m, _ in g['members']}
                       | {m for m, _ in self.dropped} | {m for m, _ in self.ungrouped})
 
@@ -144,11 +136,7 @@ class GroupDocument:
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
     def summary(self) -> pd.DataFrame:
-        """A short description of what this document groups.
-
-        Returns:
-            str: The summary line.
-        """
+        """One row per group: id, po_id, po_name, member and method counts, members."""
         rows = [{'group': gid, 'po_id': g.get('po_id', ''), 'po_name': g.get('po_name', ''),
                  'n_members': len(g['members']),
                  'n_methods': len({m for m, _ in g['members']}),
@@ -157,7 +145,7 @@ class GroupDocument:
         return pd.DataFrame(rows)
 
     def __repr__(self):
-        """Short representation naming the sample and group count."""
+        """Short representation with the group, ungrouped and dropped counts."""
         return ('<GroupDocument {} groups ({} named), {} ungrouped, {} dropped>'.format(
             len(self.groups), len(self.named), len(self.ungrouped), len(self.dropped)))
 
@@ -169,10 +157,8 @@ def propose(sample, templates: dict, annotations: dict = None) -> GroupDocument:
     The starting grouping, derived from stage 1's own top-1 calls.
 
     Genesets whose automatic top call is the same PO term are put in the same
-    group. That is a *proposal*, not an answer -- it is exactly the merge the
-    old per-method file performed implicitly when two genesets happened to be
-    given the same id, made explicit and extended across methods so the
-    reviewer can see it and disagree with it.
+    group. That is a *proposal*, not an answer: the merge is made explicit,
+    across methods, so the reviewer can see it and disagree with it.
 
     A geneset with no call is left **ungrouped** rather than dropped: it is a
     real population that nothing could name, and the two are opposite
@@ -211,14 +197,7 @@ def propose(sample, templates: dict, annotations: dict = None) -> GroupDocument:
 
 
 def file_hash(path) -> str:
-    """Content hash of a file, for staleness checks.
-
-    Args:
-        path (Path): The file.
-
-    Returns:
-        str: Hex digest.
-    """
+    """sha256 hex digest of a file's contents, for staleness checks."""
     digest = hashlib.sha256()
     with open(path, 'rb') as handle:
         for chunk in iter(lambda: handle.read(1 << 20), b''):
@@ -394,14 +373,7 @@ def read(path, available: dict = None, valid_po_ids=None, logger=None) -> GroupD
 
 
 def _read_json(path) -> GroupDocument:
-    """Read a JSON file.
-
-    Args:
-        path (Path): The file.
-
-    Returns:
-        dict: The parsed contents.
-    """
+    """Parse a JSON grouping; raises GroupError on a schema mismatch or an empty group."""
     payload = json.loads(Path(path).read_text())
     schema = payload.get('schema')
     if schema and schema != SCHEMA:
@@ -423,13 +395,9 @@ def _read_json(path) -> GroupDocument:
 
 
 def _read_tsv(path) -> GroupDocument:
-    """Read a TSV into a DataFrame.
+    """Parse a TSV grouping; a blank or `__UNGROUPED__` group means ungrouped.
 
-    Args:
-        path (Path): The file.
-
-    Returns:
-        pandas.DataFrame: The contents.
+    Raises GroupError on missing columns or one group carrying two po_ids.
     """
     frame = pd.read_csv(path, sep='\t', dtype=str).fillna('')
     missing = [c for c in ('method', 'geneset', 'group') if c not in frame]

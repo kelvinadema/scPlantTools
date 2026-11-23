@@ -9,10 +9,8 @@ structure once means the red squiggle in VSCode and the preflight error from
 the pipeline cannot disagree about what a valid config looks like.
 
 Deliberately dependency-free -- the structural checks are plain Python rather
-than `jsonschema`. This repo has no dependency manifest, and the two imports it
-already depends on invisibly (leidenalg, scikit-misc) are exactly the kind of
-thing that fails a run after hours of GPU time. Validation must not be able to
-join that list.
+than `jsonschema` -- so validation runs in any environment, outside the stage
+envs, and cannot itself fail on a missing package.
 
 Coverage is uneven on purpose:
 
@@ -125,14 +123,7 @@ class Field:
 
 
 def _type_name(value):
-    """The readable type name for a value, used in the schema and error text.
-
-    Args:
-        value: The value to describe.
-
-    Returns:
-        str: Type name.
-    """
+    """The readable type name for a value, used in the schema and error text."""
     for name, py in _PY_TYPES.items():
         if name == 'number':
             continue
@@ -647,9 +638,9 @@ INTEGRATION_TARGET = Field(
                                'cohort a floor of 10 is 0.004% of cells: it removes genes carrying '
                                'no information rather than genes carrying rare-population signal, '
                                'which is what makes it a safe substitute for a variance ranking.'),
-        # Four keys added 2026-09-10 for Chapter 3's two-layer label spaces.
-        # All default to "as before": a target that states none of them trains
-        # exactly as it did. See docs/decisions/two-layer-label-spaces.md.
+        # Four label-space keys. All default to the single-layer behaviour, so a
+        # target that states none of them is unaffected. See
+        # docs/decisions/two-layer-label-spaces.md.
         'derive_corrected_layers': Field(
             'boolean',
             doc='Derive ambient-corrected spliced/unspliced layers per sample before '
@@ -763,17 +754,11 @@ INTEGRATION_TARGET = Field(
         'artifact_key': Field('string',
                               doc='Which mapping artifact this target integrates. Overrides the '
                                   'file-level artifact_key; see that key for the values.'),
-        # `run_solo` was removed: doublet detection moved into the mapping stage
-        # as a per-sample step (mapping/doublets.py). Doublets are a
-        # within-sample artifact, so calling them from a jointly-trained model
-        # made one sample's calls depend on which others were in the run.
-        # Integration now consumes .obs['solo_doublet'] from the mapping
-        # artifact instead of producing it.
+        # No `run_solo`: doublets are called per sample in the mapping stage
+        # (docs/decisions/doublet-detection.md).
     },
-    # A target's keys are a closed set. Every one of the model keys above was
-    # read by orchestrator._get_type but absent from this spec, so with
-    # additional=True a typo'd `model_calss:` validated clean, got no editor
-    # completion, and trained plain SCVI with no error anywhere.
+    # A target's keys are a closed set, so a typo such as `model_calss:` fails
+    # validation instead of silently training plain SCVI.
     additional=False)
 
 INTEGRATION_CONFIG = Field(

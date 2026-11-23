@@ -230,8 +230,8 @@ def config_hash(config_paths: Optional[list]) -> Optional[str]:
 
     Files are hashed in sorted order so the digest is stable regardless of the
     order the caller happens to pass them in. Returns None if no paths are
-    given; unreadable paths are skipped rather than raising, since a provenance
-    stamp must never be the thing that fails a run.
+    given, and also (after logging) if any path is unreadable -- rather than
+    raising, since a provenance stamp must never be the thing that fails a run.
     """
     if not config_paths:
         return None
@@ -288,9 +288,8 @@ def write_h5ad(adata, path: Union[str, Path], sample: str, mapper: str, stage: s
     (CellBender's temp input, raw per-mapper matrices) can keep using
     `adata.write_h5ad` directly.
     """
-    # active_logger, not a hardcoded name: this is shared/ code and the stage
-    # that calls it may have configured a different logger (see
-    # shared/utils.py::active_logger for the failure this avoids).
+    # active_logger, not a hardcoded name: the calling stage may have configured
+    # a different logger (see shared/utils.py::active_logger).
     logger = active_logger()
     stamp_provenance(adata, sample=sample, mapper=mapper, stage=stage, config_paths=config_paths, extra=extra)
     # Terminal writes land at the end of multi-hour jobs; failing here because a
@@ -310,10 +309,7 @@ def _json_safe(value):
     anything lifted from `.uns` into the manifest arrives in a form
     `json.dump` refuses -- "Object of type ndarray is not JSON serializable",
     raised at the very end of a sample after every stage has succeeded.
-
-    Applied to the whole manifest rather than to the one field that happened to
-    break, because the next thing anyone lifts out of `.uns` will have the same
-    problem and this is where the serialization actually happens.
+    Applied to the whole manifest, where the serialization happens.
     """
     import numpy as _np
     if isinstance(value, dict):

@@ -14,18 +14,11 @@ from pathlib import Path
 # The logger name the current process's entrypoint configured. `setup_logger`
 # sets this; `active_logger()` reads it.
 #
-# WHY THIS EXISTS. `setup_logger` sets `propagate = False` on the named logger it
-# configures (see its comment). The shared helpers below used to hardcode
-# 'SingleCellMappingPipeline', so during an annotation run -- which configures
-# 'AnnotationLogging' -- they logged to a logger with no handlers, which does not
-# propagate to root either. The messages went nowhere. OrthoFinder failures
-# raised from `annotation/ortho.py` were dropped exactly this way: the
-# subprocess's stdout and stderr were captured, formatted, handed to a dead
-# logger, and then the bare exception surfaced with none of the detail.
-#
-# Five names are in play (SingleCellMappingPipeline, AnnotationLogging,
-# IntegrateLogging, MarkerLogging, and refine's reuse of AnnotationLogging), so
-# a helper in shared/ cannot know which one is live. It asks instead.
+# `setup_logger` sets `propagate = False`, so a message sent to any other named
+# logger has no handler and is lost. Five names are in play
+# (SingleCellMappingPipeline, AnnotationLogging, IntegrateLogging, MarkerLogging,
+# and refine's reuse of AnnotationLogging), so a shared/ helper cannot hardcode
+# one; it asks instead.
 _ACTIVE_LOGGER_NAME = 'SingleCellMappingPipeline'
 
 
@@ -35,8 +28,7 @@ def active_logger() -> logging.Logger:
 
     Use this in `shared/` helpers instead of naming a pipeline's logger, so a
     helper called from annotation reaches annotation's handlers rather than
-    mapping's. Before any `setup_logger` call it resolves to the mapping name,
-    which preserves the old behaviour for anything that never configured one.
+    mapping's. Before any `setup_logger` call it resolves to the mapping name.
     """
     return logging.getLogger(_ACTIVE_LOGGER_NAME)
 
@@ -47,7 +39,7 @@ def run_cmd(cmd: list, logfile: str=None, cwd: str=None) -> None:
 
     `logfile` names a logger explicitly; left as None it uses whichever logger
     the entrypoint configured. Do not pass 'SingleCellMappingPipeline' by hand
-    from a non-mapping stage -- that is the bug this default replaced.
+    from a non-mapping stage: its messages would be lost.
     """
     logger = logging.getLogger(logfile) if logfile else active_logger()
     try:
@@ -98,14 +90,7 @@ def merged_obo_bytes(po_path, extension_paths=()) -> bytes:
 
 
 def load_json_file(path):
-    """Read a JSON file.
-
-    Args:
-        path (Path): File to read.
-
-    Returns:
-        dict: The parsed contents.
-    """
+    """Read a JSON file; {} (after logging) when it is missing or unparseable."""
     logger = active_logger()
     if not path.exists():
         logger.warning(f"[MAPPING_STATS] file not not found at {path}")
@@ -132,16 +117,9 @@ def pipeline_log_path(pipeline: str, log_dir='logs') -> str:
     """
     Standard per-run log path: {log_dir}/{pipeline}/{pipeline}-{run_id}.log.
 
-    The one place this naming/subdirectory convention lives, so the stages
-    cannot drift apart the way they had: mapping wrote `info_<id>.log`,
-    annotation `annotation_info_<id>.log`, integration
-    `integration_info_<id>.log`, refine `refine_<id>.log` -- four different
-    prefixes for the same idea -- while refilter and markerID used a fixed
-    filename with no run id at all. `setup_logger`'s `FileHandler` defaults to
-    append mode, so a fixed name meant every run of those two kept appending
-    to the same file forever, interleaving unrelated runs with no way to tell
-    them apart; a run-id-suffixed name is what actually gives each run its own
-    file, the fixed name was never doing that job.
+    The one place this naming convention lives, so the stages cannot drift
+    apart. The run id is what gives each run its own file: `setup_logger`'s
+    `FileHandler` appends, so a fixed name would interleave unrelated runs.
 
     Creates the per-pipeline subdirectory. `log_dir` itself is the caller's
     concern -- each entrypoint resolves it from its own config (`log_dir:` in
@@ -222,11 +200,6 @@ def find_root_dir(marker: str=".root"):
     the nobackup tier where `data/`, `results/` and `indices/` live, while the
     code directories are symlinks into the backup tier -- so a `__file__`-based
     walk lands on the physical backup path, where none of the data exists.
-
-    This absorbed the `find_root()` that `inject_refine_labels.py`,
-    `reindex_composite_barcodes.py` and `slim_for_annotation.py` each carried
-    their own identical copy of; those copies were the ones honouring
-    $SCRNASEQ_ROOT, and this one was not.
     """
     env = os.environ.get('SCRNASEQ_ROOT')
     if env:
@@ -242,15 +215,10 @@ def find_root_dir(marker: str=".root"):
 
 def get_sample_output_paths(sample_output_dir: Path, stage: str='mapping', mapper: str=None, create: bool=True) -> dict:
     """
-    Generate a standardized set of output paths for a specific sample.
+    The standard output paths for one sample, created unless `create=False`.
 
-    Parameters:
-        sample_output_dir (Path): Base output directory for the sample (e.g. results/sample1)
-        stage (str): 'mapping' or 'integration'
-        mapper (str): Name of the mapper ('alevin', 'kb', 'starsolo' or None)
-
-    Returns:
-        dict: Dictionary containing standard sub-paths for outputs
+    `stage='mapping'` (requires `mapper`) gives base/raw/processed/qc/done under
+    `{sample_output_dir}/{mapper}/`; `stage='integration'` gives only base.
     """
     if stage == 'mapping':
         if mapper is None:
@@ -281,11 +249,7 @@ def get_sample_output_paths(sample_output_dir: Path, stage: str='mapping', mappe
     return paths
 
 def write_done_flag(path):
-    """Create a `.done` sentinel, making its parent directory if needed.
-
-    Args:
-        path (Path): The sentinel to write.
-    """
+    """Create a `.done` sentinel recording the completion time; its directory must exist."""
     with open(path, 'w') as f:
         f.write('Completed at {}'.format(datetime.datetime.now().isoformat()))
 
@@ -316,14 +280,7 @@ class GTFparser():
 
 
     def _get_gene_identifier(self, gene):
-        """The gene ID for one gffutils feature, trying the usual attribute keys.
-
-        Args:
-            gene: A gffutils feature.
-
-        Returns:
-            str or None: The identifier.
-        """
+        """The gene ID for one gffutils feature: gene_id, gene_name or ID, else the feature id."""
         for key in ["gene_id", "gene_name", "ID"]:
             if key in gene.attributes:
                 return gene.attributes[key][0]
@@ -333,15 +290,8 @@ class GTFparser():
 
     def get_genes_by_attribute(self, attr_name: str, attr_value: str, match_type: str = 'exact') -> list:
         """
-        Generalized method to extract gene IDs based on GTF attribute.
-
-        Args:
-            attr_name (str): The attribute name (e.g. 'gene_biotype', 'product')
-            query (str): The value to search for
-            match_type (str): One of 'exact', 'prefix', 'substring'
-
-        Returns:
-            list: Matching gene IDs
+        IDs of genes whose `attr_name` (e.g. 'gene_biotype', 'product') matches
+        `attr_value`; `match_type` is 'exact', 'prefix' or 'substring'.
         """
         result = list()
         for gene in self.db.features_of_type('gene'):
