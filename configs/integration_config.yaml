@@ -62,6 +62,73 @@ groups:
   induced_all: ['induced_10x', 'induced_bd']
   tip_induced_all: ['tip', 'induced_all']
 
+  # The three UNTREATED susceptible-zone controls, one per (tech, prep)
+  # combination the SZ cohort was collected under:
+  #
+  #   pMock    10xv3         2h_only      8,633 cells
+  #   BDMock   bd_rhapsody   2h_only     26,913
+  #   SMu008   bd_rhapsody   1h_2h_mix   32,096
+  #
+  # A group rather than three names written out at each use, because that
+  # one-sample-per-combination property is the whole reason the set exists and is
+  # invisible in a bare list. It also means `batch_key: {sz_mocks: [tech, prep]}`
+  # is exactly per-sample correction here -- three samples, three levels -- but
+  # states WHY the three differ rather than merely that they do, which is what
+  # makes it extend correctly if a fourth control is ever added.
+  #
+  # These are members of induced_10x / induced_bd too. That is not a conflict:
+  # groups are sample lists, and a sample may appear in several. It only becomes
+  # one inside a single `batch_key:` mapping, where two entries claiming the same
+  # sample is a hard error (parse_batch_key) precisely because precedence there
+  # would be arbitrary.
+  sz_mocks: ['pMock', 'BDMock', 'SMu008']
+
+  # The tip reference plus those controls, and nothing else -- the bridge cohort.
+  # Distinct from tip_induced_all, which carries every treated sample as well:
+  # here the only non-tip cells are untreated, so tip and SZ can be put in one
+  # latent space without a treatment effect in it.
+  tip_sz_mocks: ['tip', 'sz_mocks']
+
+  # -------------------------------------------------------------------------
+  # THE NUCLEI ARM. Added 2026-08-15.
+  #
+  # `nMOCK`, `nNOD` and `nBAP` are 10x FACS-sorted NUCLEI; every other sample in
+  # every group above is a protoplast. They are the only libraries that never
+  # went through protoplasting -- a 1-2 h wounding treatment applied before
+  # capture -- so they are the control for whether a treatment response is partly
+  # a protoplasting artifact, and the only libraries in which root-hair
+  # COMPOSITION can be contrasted at all (the protoplast arm's only 1 h
+  # libraries, SMu005/SMu006, are both NF and have no 1 h mock).
+  #
+  # THEY DEFAULT TO `tech: 10xv3`, THE SAME AS THE 10x PROTOPLAST SAMPLES. So a
+  # target carrying `batch_key: 'tech'` puts nuclei and 10x protoplast cells in
+  # ONE batch level and applies no modality correction at all. Every target built
+  # on these groups must name `sample_type` as well -- `['tech', 'sample_type']`
+  # -- which is why each one below does.
+  #
+  # `N0h` is deliberately not a member. It is a second nuclei mock that has not
+  # been through this chapter's QC, and adding it silently would change what
+  # "the nuclei mock" means in a contrast.
+  # -------------------------------------------------------------------------
+  sz_nuclei: ['nMOCK', 'nNOD', 'nBAP']
+
+  # Just the nuclei mock, so a MAPPED batch_key can give it its own entry without
+  # overlapping `sz_mocks` -- parse_batch_key treats a sample claimed by two
+  # mapping entries as a hard error, not a precedence question.
+  nuc_mock: ['nMOCK']
+
+  # `sz_mocks` plus the nuclei mock: the untreated cohort with both modalities in
+  # it. This is the LABELLING reference -- it exists so that "cortex" means the
+  # same thing in a nucleus and in a protoplast.
+  sz_mocks_nuc: ['pMock', 'BDMock', 'SMu008', 'nMOCK']
+  tip_sz_mocks_nuc: ['tip', 'sz_mocks_nuc']
+
+  # The full perturbation cohort with the nuclei arm folded in: 17 protoplast
+  # libraries plus mock/NF/BAP in nuclei. Balanced at 3 h -- every treatment
+  # exists in both modalities -- and unbalanced everywhere else, since no
+  # rhizobial timepoint has a nuclei counterpart.
+  induced_all_nuc: ['induced_all', 'sz_nuclei']
+
 IntegrateConfigs:
 # TIP reference dataset
   MtTip:

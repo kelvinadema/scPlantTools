@@ -41,6 +41,10 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "seeds": {
+                "type": "object",
+                "description": "Per-target override of the top-level `seeds` block (same keys; the target's values win). Added 2026-09-14: chapter 3 runs `quantile_scope: geneset` for At_tip_ls_H and `group` for the Medicago target."
               }
             },
             "required": [
@@ -89,6 +93,14 @@
             "min_seed_cells": {
               "type": "integer",
               "description": "Classes with fewer seeds are returned to Unassigned. Guess; scANVI's real floor is unknown."
+            },
+            "quantile_scope": {
+              "type": "string",
+              "enum": [
+                "group",
+                "geneset"
+              ],
+              "description": "Combined run only. 'group' (default): the seed quantile is taken over all cells a review group wins, so a group uniting two clusters with different score scales seeds only the higher-scoring one. 'geneset': the quantile is taken per winning member geneset within the group (falls back to the group cutoff below 10 cells); exclusivity is unchanged. Added 2026-09-14 for chapter 3 (C2 addendum: nuclei-only pericycle on At_tip_ls_H)."
             }
           }
         },
@@ -167,6 +179,10 @@
             },
             "random_state": {
               "type": "integer"
+            },
+            "compare_models": {
+              "type": "boolean",
+              "description": "Also embed every OTHER latent the run fitted -- the base scVI and whichever comparison arms ran -- with these same settings, into that model's own directory. On by default: the arms exist to be compared and the comparison is visual. Costs one neighbours+UMAP per extra latent."
             }
           }
         },

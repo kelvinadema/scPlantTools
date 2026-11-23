@@ -107,15 +107,28 @@ samples:
       - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/5_s_zone_exp/5_S_zone_exp_S5_L001_R2_001.fastq.gz
       - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/5_s_zone_exp/5_S_zone_exp_S5_L002_R2_001.fastq.gz
 
+  # SWAPPED 2026-08-21. The reads under MOCK/ are the BAP-treated library and the
+  # reads under BAP/ are the mock; the tubes were exchanged. Established on MtNIN
+  # (MtrunA17_Chr5g0448621), induced by both BAP and NF and near-absent in mock:
+  # the library then called nMOCK carried 10.61% NIN+ cells at 0.786 mean CP10K
+  # -- 120x pMock and above both pBAP and pNOD -- while the one called nBAP sat
+  # at 0.591% / 0.028, level with BDMock (0.660%) and SMu008 (0.849%). Six
+  # further tests agree, including pi(nNOD over nBAP)=0.721 on the NF axis
+  # against 0.033 over nMOCK, and the gap survives depth-matching.
+  #
+  # The FASTQ paths move; the NAMES and their attributes stay. So `nMOCK` still
+  # means the mock and every downstream `nMOCK` reference stays correct.
+  # Confirmed as a swap (not a failed BAP treatment) by the user, 2026-08-21.
+  # Full record: 05-Mt-resource/ch5-todo-2026-08-21.md section 6b.
   nMOCK:
     sample_type: nuclei
     batch: 10x_nuclei_facs_untreated_sz
     treatment: mock
     time_h: 0
     fastq1:
-      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/MOCK/N_Mock-SCI7T061-SCI5T061_H3W5WDSX5_S2_L003_R1_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/BAP/N_BAP-SCI7T073-SCI5T073_H3W5WDSX5_S1_L003_R1_001.fastq.gz
     fastq2:
-      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/MOCK/N_Mock-SCI7T061-SCI5T061_H3W5WDSX5_S2_L003_R2_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/BAP/N_BAP-SCI7T073-SCI5T073_H3W5WDSX5_S1_L003_R2_001.fastq.gz
 
   nNOD:
     sample_type: nuclei
@@ -133,9 +146,9 @@ samples:
     treatment: BAP
     time_h: 3
     fastq1:
-      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/BAP/N_BAP-SCI7T073-SCI5T073_H3W5WDSX5_S1_L003_R1_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/MOCK/N_Mock-SCI7T061-SCI5T061_H3W5WDSX5_S2_L003_R1_001.fastq.gz
     fastq2:
-      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/BAP/N_BAP-SCI7T073-SCI5T073_H3W5WDSX5_S1_L003_R2_001.fastq.gz
+      - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/Medicago/Nuclei/10x/MOCK/N_Mock-SCI7T061-SCI5T061_H3W5WDSX5_S2_L003_R2_001.fastq.gz
 
   N_DTT_12:
     sample_type: nuclei
@@ -200,7 +213,7 @@ samples:
 
   SMu005:
     tech: bd_rhapsody
-    prep: 1h_2h_mix
+    prep: 1h
     batch: BD_protoplast_treated_NF3H_1Hprot_calcein_sz
     treatment: NF
     time_h: 3
@@ -211,7 +224,7 @@ samples:
 
   SMu006:
     tech: bd_rhapsody
-    prep: 1h_2h_mix
+    prep: 1h
     batch: BD_protoplast_treated_NF3H_1Hprot_fda_sz
     treatment: NF
     time_h: 3
@@ -237,7 +250,7 @@ samples:
   SMu008:
     tech: bd_rhapsody
     prep: 1h_2h_mix
-    batch: BD_protoplast_treated_mock_1Hprot_sz
+    batch: BD_protoplast_treated_mock_1h2hmix_sz
     treatment: mock
     time_h: 0
     fastq1:

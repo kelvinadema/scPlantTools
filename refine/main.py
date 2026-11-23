@@ -187,11 +187,16 @@ def main(config_path, sample=None, method=None, dry_run=False, force=False,
                 batch_key=target.get('batch_key'),
                 counts_layer=target.get('counts_layer', 'corrected_counts'),
                 covariates=target.get('covariates'),
-                seeds=cfg.get('seeds'), safeguards=cfg.get('safeguards'),
+                seeds=seeds_for(cfg, target), safeguards=cfg.get('safeguards'),
                 model=cfg.get('model'), embedding=cfg.get('embedding'),
                 ontology_file=cfg.get('ontology_file'),
                 ontology_extensions=_ontology_extensions(cfg),
-                allow_stale=allow_stale)
+                allow_stale=allow_stale,
+                # --force means retrain. Otherwise a model already on disk for
+                # this exact (sample, run, model) is loaded instead of refitted:
+                # the integrator's own skip is gated on the registry, which refine
+                # deliberately opts out of via persist=False.
+                reuse_models=not force)
 
             run.prepare()
 
@@ -220,6 +225,29 @@ def main(config_path, sample=None, method=None, dry_run=False, force=False,
         logger.error('[REFINE] failures:\n  %s', '\n  '.join(failures))
         return 1
     return 0
+
+
+def seeds_for(cfg: dict, target: dict) -> dict:
+    """
+    The `seeds` block for one target: the global block, with the target's own
+    `seeds` keys laid over it.
+
+    Added 2026-09-14 so a chapter can state a per-target seeding rule in the
+    config rather than in two config files: chapter 3's Arabidopsis target
+    needs `quantile_scope: geneset` (a review group that unites a nuclei and a
+    protoplast cluster) while the same scope over-seeds the Medicago root hair
+    group, whose members include a cluster with no root-hair evidence.
+
+    Args:
+        cfg (dict): The `RefineConfigs` block.
+        target (dict): One entry of `cfg['targets']`.
+
+    Returns:
+        dict: Merged seeds settings (a new dict; neither input is modified).
+    """
+    merged = dict(cfg.get('seeds') or {})
+    merged.update(target.get('seeds') or {})
+    return merged
 
 
 def _report_dry_run(run, logger) -> None:

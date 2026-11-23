@@ -1,0 +1,225 @@
+# yaml-language-server: $schema=./schemas/qc_config.schema.json
+QCconfigs:
+  default:
+    gtf_path:  
+      /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/genomes/Medicago/Mt5-annot_reformattedTID.gtf
+    qc_metrics:
+      mitochondrial_fraction:
+        layer: "corrected_counts"
+        enabled: true
+        gtf_attribute: gene_id
+        gtf_value: "MtrunA17_MT"
+        gtf_match_type: "prefix" 
+
+      chloroplast_fraction:
+        layer: "corrected_counts"
+        enabled: true
+        gtf_attribute: gene_id
+        gtf_value: "MtrunA17_CP" 
+        gtf_match_type: "prefix"
+
+      ribosomal_rna_fraction:
+        layer: "corrected_counts"
+        enabled: true
+        gtf_attribute: "gene_biotype"
+        gtf_value: "rRNA"
+        gtf_match_type: "exact"
+
+      ribosomal_protein_fraction:
+        layer: "corrected_counts"
+        enabled: true
+        gtf_attribute: "product"
+        gtf_value: "ribosomal protein"
+        gtf_match_type: "substring"
+
+      ambient_fraction:
+        enabled: true
+        numerator: 'corrected_counts'
+        denominator: 'raw_counts'
+
+      spliced_fraction:
+        enabled: true
+        mask_with_zero: 'corrected_counts'
+        numerator: 'rspliced'
+        denominator: ['rspliced', 'runspliced']
+
+      cell_sparsity:
+        layer: "corrected_counts"
+        enabled: true
+        min_count: 1
+        min_cells: 5
+
+      cell_complexity:
+        layer: "corrected_counts"
+        enabled: true
+      
+      fraction_top_n_genes:
+        enabled: true
+        layers: ['corrected_counts']
+        n: 10
+
+      nUMI:
+        enabled: true
+        layers: ['raw_counts', 'corrected_counts']
+
+      nGenes:
+        enabled: true
+        layers: ['raw_counts', 'corrected_counts']
+
+      entropy:
+        enabled: true
+        layers: ['corrected_counts']
+        
+  arabidopsis:
+    gtf_path:
+      /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/genomes/Arabidopsis/Arabidopsis_thaliana.gtf
+    qc_metrics:
+      mitochondrial_fraction:
+        layer: "corrected_counts"
+        enabled: true
+        gtf_attribute: gene_id
+        gtf_value: "ATMG"
+        gtf_match_type: "prefix"
+
+      chloroplast_fraction:
+        layer: "corrected_counts"
+        enabled: true
+        gtf_attribute: gene_id
+        gtf_value: "ATCG"
+        gtf_match_type: "prefix"
+
+      ribosomal_rna_fraction:
+        layer: "corrected_counts"
+        enabled: true
+        gtf_attribute: "gene_biotype"
+        gtf_value: "rRNA"
+        gtf_match_type: "exact"
+
+      # Araport11 has no product attribute - disable
+      ribosomal_protein_fraction:
+        layer: "corrected_counts"
+        enabled: false
+        gtf_attribute: "product"
+        gtf_value: "ribosomal protein"
+        gtf_match_type: "substring"
+
+      ambient_fraction:
+        enabled: true
+        numerator: 'corrected_counts'
+        denominator: 'raw_counts'
+
+      spliced_fraction:
+        enabled: true
+        mask_with_zero: 'corrected_counts'
+        numerator: 'rspliced'
+        denominator: ['rspliced', 'runspliced']
+
+      cell_sparsity:
+        layer: "corrected_counts"
+        enabled: true
+        min_count: 1
+        min_cells: 5
+
+      cell_complexity:
+        layer: "corrected_counts"
+        enabled: true
+
+      fraction_top_n_genes:
+        enabled: true
+        layers: ['corrected_counts']
+        n: 10
+
+      nUMI:
+        enabled: true
+        layers: ['raw_counts', 'corrected_counts']
+
+      nGenes:
+        enabled: true
+        layers: ['raw_counts', 'corrected_counts']
+
+      entropy:
+        enabled: true
+        layers: ['corrected_counts']
+
+  maize:
+    gtf_path:
+      /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/genomes/Zea_mays/Zea_mays-full.gtf
+    qc_metrics:
+      mitochondrial_fraction:
+        layer: "corrected_counts"
+        enabled: true
+        gtf_attribute: gene_id
+        gtf_value: "Zmays_MT_"
+        gtf_match_type: "prefix"
+
+      chloroplast_fraction:
+        layer: "corrected_counts"
+        enabled: true
+        gtf_attribute: gene_id
+        gtf_value: "Zmays_CP_"
+        gtf_match_type: "prefix"
+
+      # Re-enabled with the 2026-07-27 genome update. The previous Gramene
+      # AGPv4 + NCBI RefSeq organelle build carried no rRNA-typed gene at all
+      # in the nuclear annotation, so this was disabled to avoid silently
+      # measuring organelle-only rRNA and mislabeling it. The current
+      # single-source Zea_mays.gff3 does carry nuclear rRNA genes (225
+      # gene_biotype=rRNA rows total: 207 nuclear + 8 Mt + 10 Pt, confirmed),
+      # so the metric now means what its name says.
+      ribosomal_rna_fraction:
+        layer: "corrected_counts"
+        enabled: true
+        gtf_attribute: "gene_biotype"
+        gtf_value: "rRNA"
+        gtf_match_type: "exact"
+
+      # No "product" attribute survives the GFF3->GTF conversion (only
+      # gene_id/transcript_id/gene_biotype are carried over -- see
+      # build_reference.py alongside the source files), and the nuclear
+      # source has none to carry over in the first place. Same issue as the
+      # arabidopsis profile above.
+      ribosomal_protein_fraction:
+        layer: "corrected_counts"
+        enabled: false
+        gtf_attribute: "product"
+        gtf_value: "ribosomal protein"
+        gtf_match_type: "substring"
+
+      ambient_fraction:
+        enabled: true
+        numerator: 'corrected_counts'
+        denominator: 'raw_counts'
+
+      spliced_fraction:
+        enabled: true
+        mask_with_zero: 'corrected_counts'
+        numerator: 'rspliced'
+        denominator: ['rspliced', 'runspliced']
+
+      cell_sparsity:
+        layer: "corrected_counts"
+        enabled: true
+        min_count: 1
+        min_cells: 5
+
+      cell_complexity:
+        layer: "corrected_counts"
+        enabled: true
+
+      fraction_top_n_genes:
+        enabled: true
+        layers: ['corrected_counts']
+        n: 10
+
+      nUMI:
+        enabled: true
+        layers: ['raw_counts', 'corrected_counts']
+
+      nGenes:
+        enabled: true
+        layers: ['raw_counts', 'corrected_counts']
+
+      entropy:
+        enabled: true
+        layers: ['corrected_counts']
+

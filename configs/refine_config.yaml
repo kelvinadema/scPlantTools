@@ -92,8 +92,109 @@ RefineConfigs:
         - ribosomal_rna_fraction_corrected_counts
       methods: [wilcoxon, t-test, cosg, hotspot, lmd, cfmf]
 
+    # THE CHAPTER 5 PART B REFERENCE. Added 2026-08-12.
+    #
+    # 144,502 cells: the nine tip libraries plus the three PROTOPLAST
+    # susceptible-zone controls (pMock, BDMock, SMu008). It exists to be the
+    # label source for scArches surgery of the induced cohort, and it is a
+    # better one than MtSZ_labels for two reasons that are properties of the
+    # fit rather than preferences:
+    #
+    #   do_hvg: False   the full 52,689-gene space, not a 2,000-gene HVG
+    #                   subset. MtSZ_labels is HVG, which is why
+    #                   scArches/MtInduced came out at 2,000 genes and cannot
+    #                   carry a contrast in gene space at all.
+    #   SZ mocks in it  it contains the mature susceptible-zone tissue a root
+    #                   tip does not have, which was the standing objection to
+    #                   MtTip as a reference. The tip supplies annotation
+    #                   depth; the mocks supply the tissue the query IS.
+    #
+    # PROTOPLAST ONLY. nMOCK/nNOD/nBAP/N0h have no counterpart here, so the
+    # nuclei arm stays an independent replication check rather than being
+    # mapped onto a protoplast manifold.
+    #
+    # batch_key: batch_mixed, for exactly the reason spelled out on
+    # MtTipInduced_DRVI_full_fixed above -- the fit was trained on a MAPPED
+    # batch key (`tip: sample`, `sz_mocks: [tech, prep]`) and the integration
+    # already materialised that per-cell assignment into .obs as `batch_mixed`
+    # (verified on this file: 12 levels). A dict here does not work, and
+    # `sample` would correct on a partition the latent space was never built
+    # with.
+    #
+    # ANNOTATION LAYOUT. refine builds sample_dir = annotation_dir/<sample> and
+    # needs the groups.json AND <method>/<sample>_decisions.tsv under it. Stage
+    # 1 wrote the six method directories to annotation/results/<sample>/ while
+    # the review exported groups.json to annotation/<sample>/. The method dirs
+    # are symlinked into annotation/<sample>/ so both resolve, matching how the
+    # two targets above are laid out.
+    MtPartA_TipSZmock_DRVI:
+      adata: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/DRVI/MtPartA_TipSZmock_DRVI/MtPartA_TipSZmock_DRVI.h5ad
+      batch_key: batch_mixed
+      counts_layer: corrected_counts
+      covariates:
+        - corrected_counts_total_counts
+        - mitochondrial_fraction_corrected_counts
+        - ribosomal_rna_fraction_corrected_counts
+      methods: [wilcoxon, t-test, cosg, hotspot, lmd, cfmf]
 
-      
+    # The same reference with the NUCLEI MOCK in it -- nine tip libraries,
+    # pMock/BDMock/SMu008, and nMOCK. Its job is a shared label vocabulary
+    # across modalities, so that "cortex" means the same thing in a nucleus and
+    # in a protoplast and a nuclei-vs-protoplast contrast is about treatment
+    # rather than about what two label sets happen to call things.
+    #
+    # batch_mixed, same reasoning as above and for the same structural reason:
+    # the target's batch_key is a MAPPING (tip: sample, sz_mocks: [tech, prep],
+    # nuc_mock: [tech, sample_type]) which the integration already materialised
+    # per cell. Verified on this file: 13 levels, with the nuclei mock on its
+    # own as `tech=10xv3+sample_type=nuclei`. A dict does not work here and
+    # `sample` would correct on a partition the latent was never built with.
+    #
+    # ANNOTATION LAYOUT. Stage 1 wrote the six method directories and
+    # groups.json to annotation/results/<sample>/ and only the review page to
+    # annotation/<sample>/. Both are symlinked into annotation/<sample>/ so
+    # refine's sample_dir resolves, matching MtPartA_TipSZmock_DRVI above.
+    # groups.json is a SYMLINK rather than a copy on purpose: it is the file
+    # being edited by hand, and a copy would drift from it silently.
+    #
+    # ONE NUCLEI LIBRARY. Expect degraded confidence and elevated novelty on
+    # nuclei cells -- that is n=1 showing, not a finding -- and treat any group
+    # drawn overwhelmingly from nMOCK as a library, not a cell type.
+    MtPartA_TipSZmock_nuc:
+      adata: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/DRVI/MtPartA_TipSZmock_nuc/MtPartA_TipSZmock_nuc.h5ad
+      batch_key: batch_mixed
+      counts_layer: corrected_counts
+      covariates:
+        - corrected_counts_total_counts
+        - mitochondrial_fraction_corrected_counts
+        - ribosomal_rna_fraction_corrected_counts
+      methods: [wilcoxon, t-test, cosg, hotspot, lmd, cfmf]
+
+    # THE CURRENT PART A REFERENCE, and the one with decisions on disk.
+    # Bake-off winner (nb / dropout 0.1) of the four-arm grid run 2026-08-21,
+    # at n_latent 256 and with NO continuous covariates in the DRVI fit -- see
+    # 05-Mt-resource/configs/integration_drvi_bakeoff_partAnuc.yaml.
+    #
+    # Its nuclei mock is the CORRECTED one: `nMOCK` and `nBAP` were exchanged on
+    # 2026-08-21 after MtNIN showed the library called nMOCK was BAP-treated
+    # (10.61% vs 0.591% NIN+ cells). The entry above, `MtPartA_TipSZmock_nuc`,
+    # predates that and carries a cytokinin-treated library as its untreated
+    # nuclei mock. **Do not refine that one.**
+    #
+    # `covariates` are kept here even though the DRVI fit dropped them: this
+    # stage trains its own scVI, which has no equivalent of DRVI's OOD
+    # interpretability path and therefore none of the reason the fit dropped
+    # them. Regressing QC variation out of the seeding model is the ordinary
+    # scVI thing to do.
+    MtPartA_TipSZmock_nuc_bo_nb_d10:
+      adata: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/DRVI/MtPartA_TipSZmock_nuc_bo_nb_d10/MtPartA_TipSZmock_nuc_bo_nb_d10.h5ad
+      batch_key: batch_mixed
+      counts_layer: corrected_counts
+      covariates:
+        - corrected_counts_total_counts
+        - mitochondrial_fraction_corrected_counts
+        - ribosomal_rna_fraction_corrected_counts
+      methods: [wilcoxon, t-test, cosg, hotspot, lmd, cfmf]
 
 
   # ---------------------------------------------------------------------------
@@ -155,9 +256,70 @@ RefineConfigs:
     # (scvi-tools dispatches on the metric *name*) and the mode flips to max --
     # scib scores are better when higher, unlike elbo_validation.
     tune: false
-    n_trials: 30
+    # 12, matching `comparison.n_trials` below. Inert while `tune: false` -- the
+    # base fit is deliberately untuned so that comparing refine runs to each
+    # other is possible at all -- but a number that contradicts the one actually
+    # used is a trap for whoever turns tuning on here.
+    n_trials: 12
     tune_metric: Total
-    max_epochs: 400
+    # max_epochs is now a CEILING, not a target -- early_stopping below is what
+    # ends the fit. Measured on the 147,697-cell nuclei reference at 19.73
+    # s/epoch: 400 epochs is 2 h 11 m, while scvi's own get_max_epochs_heuristic
+    # returns 54 for that cell count (17.7 min).
+    #
+    # READ THIS BEFORE ASSUMING early_stopping FIXES THAT. max_epochs also sets
+    # KL warmup: normalize_kl_warmup derives it as 50% of the effective
+    # max_epochs when unset, and while the KL term is still annealing the
+    # monitored elbo_validation is a moving target. With patience 45 the
+    # earliest a stop can fire is warmup + patience:
+    #
+    #     max_epochs 400 -> warmup 200 -> earliest stop ~245 ep (80 min)
+    #     max_epochs 120 -> warmup  60 -> earliest stop ~105 ep (35 min)
+    #     max_epochs  60 -> warmup  30 -> earliest stop ~ 60 ep (never fires)
+    #
+    # SET TO 60 on 2026-08-22, down from 200 (and 400 before that), to match the
+    # integration fits and this stage's own comparison arms. The 200 was chosen
+    # to leave early stopping room to fire, but the arithmetic in _train_args
+    # shows why that does not work: warmup is 50% of max_epochs and patience is
+    # 45, so at 200 the EARLIEST possible stop is ~145 epochs -- against a
+    # heuristic of 54. Early stopping could not fire before ~2.7x the point of
+    # convergence, so the ceiling, not the stop, was still what bounded the fit.
+    #
+    # 60 is the same number three independent things point at:
+    #   * scvi's own get_max_epochs_heuristic -> 54 for these 147,697 cells
+    #   * the DRVI integration fits, where validation ELBO bottoms at epoch
+    #     51-57 of 60 (measured, jobs 42063442 / 42117058)
+    #   * this file's own `comparison.max_epochs: 60`, already set for exactly
+    #     this reason
+    #
+    # At 60 the derived warmup is 30, identical to the integration configs'
+    # explicit `n_epochs_kl_warmup: 30`, so the two stages now anneal the same
+    # way. Early stopping cannot fire (30 + 45 > 60) and is retained only as a
+    # safety net, which is the same position the integration fits are in.
+    #
+    # THIS CHANGES THE LABELS. Runs before 2026-08-22 trained 200 or 400 epochs
+    # and will not be reproduced exactly by this config.
+    max_epochs: 60
+    early_stopping: true
+    # scvi's own default, stated rather than inherited: monitor
+    # elbo_validation, mode min, min_delta 0.0. min_delta 0 means ANY
+    # improvement resets the counter, so this is a genuine plateau detector and
+    # not an aggressive cut.
+    early_stopping_patience: 45
+    check_val_every_n_epoch: 1
+    # ZERO FOR THE BASE FIT, AND THAT IS THE MEASURED ANSWER, not the obvious
+    # one. Workers were set to 8 here on the assumption that more is better;
+    # measured on job 42083219 the base fit ran at 23.87 s/epoch with 8 workers
+    # against 19.73 s/epoch with none -- 21% SLOWER.
+    #
+    # The reason is that this fit is not the one that was starved. It runs alone
+    # with all 32 CPUs of the job and is GPU-bound, so worker processes only add
+    # serialisation and IPC to a loop that was never waiting on collation. The
+    # starved case is the tuning arms, where ray splits those 32 CPUs across
+    # four concurrent trials -- see `dataloader_workers` under `comparison`.
+    #
+    # 0 is scvi's own default and means in-process collation.
+    dataloader_workers: 0
     # Empty means scvi's own constructor defaults, which is honestly "not
     # specified here" rather than a set of numbers we can name.
     model_params: {}
@@ -168,14 +330,193 @@ RefineConfigs:
     # almost nothing but unlabelled data.
     n_samples_per_label: 100
 
+    # -----------------------------------------------------------------------
+    # COMPARISON ARMS. Optional, both off by default, fitted AFTER the
+    # deliverable chain is complete and safe on disk.
+    #
+    # The default flow is unchanged and stays the product:
+    #     scVI (untuned) -> scANVI -> propagated annotation -> UMAP on scANVI
+    # These arms add latents beside it and nothing downstream reads them:
+    #     scvi              .obsm['X_scVItuned_<run>']
+    #     joint_embedding   .obsm['X_jointSCVI_<run>']
+    #
+    # WHY THEY RUN AFTER scANVI AND NOT BESIDE THE BASE FIT. Both are tuned on
+    # scib, whose objective is half batch correction and half BIO CONSERVATION
+    # -- and the bio half is scored against labels. Before prediction the only
+    # labels in the object are seeds, ~7.5% of cells, so scoring a latent on
+    # them measures how well it organises a small non-random subset. After
+    # prediction every cell carries a propagated call and the same metric is
+    # computed over a complete partition. That is the whole reason these are a
+    # separate stage rather than `tune: true` on the base model.
+    #
+    # WHY THE BASE scVI STAYS UNTUNED. It exists to seed scANVI, and comparing
+    # refine runs to each other only works if the base model is held fixed.
+    # Tuning it would make every run's labels a function of that run's search.
+    #
+    # labels_key: `prediction`, resolved to prediction_<run>, NOT annotation_.
+    # `annotation_` carries UNASSIGNED for every demoted cell -- a reject bin
+    # holding whatever was low-confidence or high-novelty, heterogeneous by
+    # construction. Handing it to scib as a cell type would reward a latent for
+    # making that bin compact, which is backwards. `prediction_` is the same
+    # calls before demotion, so the partition is complete.
+    #
+    # BUDGET, BEFORE SWITCHING EITHER ON. Every trial is a full fit and scib
+    # adds a neighbour graph per trial on top. On the 147k-cell TipSZmock_nuc
+    # reference a 60-epoch DRVI fit took ~4.5 h, so one untruncated 400-epoch
+    # trial is ~30 h. ASHA (grace_period 20, reduction_factor 3) kills most
+    # trials early, but the two arms together at n_trials: 30 plausibly run to
+    # several hundred GPU-hours. The values below are a deliberately small
+    # starting point -- measure one arm on a real cohort before scaling up, and
+    # note the arms run SEQUENTIALLY inside one job, so wall clock is their sum.
+    comparison:
+      labels_key: prediction
+      tune: true
+      tune_metric: Total
+      # 24 trials, 60 epochs -- both chosen against measurement, not taste.
+      #
+      # EPOCHS. scvi's own get_max_epochs_heuristic (which this repo already
+      # imports) returns 54 for this reference's 147,697 cells, and 29 for the
+      # 273k SZ object: past roughly that, extra epochs buy little because the
+      # heuristic scales with how many gradient steps an epoch already is. 60
+      # rounds 54 up and matches the 60 the DRVI fits used, so their measured
+      # timings transfer directly.
+      #
+      # The base scVI above now runs the same 60 (2026-08-22). It was 400 when
+      # this comment was written and 200 when the note was last revised; both
+      # readings are stale and the numbers below no longer carry that overhead.
+      #
+      # TRIALS. ASHA (grace_period 20, reduction_factor 3) promotes ~1/3 past
+      # epoch 20, so the average trial costs ~33 of 60 epochs. 24 trials is
+      # then ~13 full-fit equivalents per arm, and divides evenly across 4 GPUs.
+      #
+      # WHAT 24 TRIALS ACTUALLY BUYS, stated so it is not over-read:
+      #   SCVI                216 distinct models -- 24 trials is real coverage
+      #   JointEmbeddingSCVI  5,184 distinct models -- 24 trials is SCREENING.
+      # The joint-embedding arm has four loss weights on top of the shared
+      # architecture keys. TPE will find a decent region; it will not find the
+      # optimum, and the result should be read as "this family is/is not worth
+      # pursuing", not as a tuned model.
+      # 12, NOT 24 -- revised 2026-08-18 against a measurement, not an estimate.
+      #
+      # Job 42068733 ran this arm at 24 trials, 4-concurrent on 4 GPUs, and took
+      # 14 h 24 m: six rounds of four at ~2 h 20 m PER TRIAL. A solo 60-epoch fit
+      # on this object is ~20 min (19.73 s/epoch), so concurrency cost ~7x. The
+      # cause is visible in that run's log: lightning warns the train_dataloader
+      # has too few workers, and running four trials splits 32 CPUs into 8 each,
+      # so every trial is CPU-starved on data loading rather than GPU-bound.
+      #
+      # At 24 trials the two arms together are ~28 h on top of a ~3 h deliverable
+      # -- most of a 48 h limit for a comparison. 12 halves that to ~14 h total
+      # while keeping 12/54 = 22% coverage of the joint-embedding arm's four
+      # weights, which is enough to say whether the family is worth pursuing.
+      #
+      # If this needs to go back up, raise dataloader workers first: the fix for
+      # a CPU-starved trial is more workers, not fewer trials.
+      n_trials: 12
+      max_epochs: 60
+      # FOUR, and only the ARMS get workers at all. ray gives each trial 8 of
+      # the job's 32 CPUs and runs four at once, which is the configuration that
+      # was actually CPU-starved: job 42068733 took ~2 h 20 m per trial against
+      # ~20 min for the same fit run solo. Decoupling collation from the
+      # training loop is what that case needs.
+      #
+      # The base fit above is set to 0 for the opposite reason, measured: alone
+      # on the node it is GPU-bound and workers made it 21% slower. Same knob,
+      # opposite answer, because the two are bottlenecked on different things.
+      #
+      # 4 workers x 4 trials = 16 worker processes inside a 32-CPU allocation,
+      # with headroom. Above ~6 this oversubscribes the node.
+      dataloader_workers: 4
+      scvi:
+        enabled: true
+        model_params: {}
+      joint_embedding:
+        enabled: true
+        model_params: {}
+        # ONLY THE FOUR LOSS WEIGHTS ARE SEARCHED. 5,184 -> 54 distinct models.
+        #
+        # WHAT scib CAN ACTUALLY RANK. Its composite is 40% batch correction and
+        # 60% bio conservation, and BOTH halves are computed on latent GEOMETRY
+        # -- kNN structure, label agreement, silhouette. So it ranks whatever
+        # moves cells relative to each other, and ranks nothing else honestly.
+        #
+        #   joint_embedding_weight, lambda_off_diag, reconstruction_weight,
+        #   variance_weight
+        #       These trade reconstruction fidelity against embedding structure.
+        #       They ARE the geometry knobs, and they are the only thing that
+        #       distinguishes this model from plain scVI -- which makes scib the
+        #       right judge of them and makes them the whole point of the arm.
+        #       SEARCHED.
+        #
+        #   gene_likelihood, dispersion, dropout_rate
+        #       Noise model and regularisation. They change how well counts are
+        #       fitted; their effect on geometry is second order. The DRVI
+        #       bake-off measured its two best gene_likelihood arms 0.043% apart
+        #       on ELBO -- on a geometry metric, at 24 trials, that is noise.
+        #       PINNED.
+        #
+        #   n_layers, n_hidden
+        #       Encoder capacity: fit quality again, weakly geometry. PINNED.
+        #
+        #   n_latent
+        #       The one arguable exclusion. scib is genuinely NOT monotone in it
+        #       -- too small loses biology, too large lets batch structure
+        #       survive -- so it could be searched. It is pinned anyway because
+        #       it interacts with all four weights, and spending the budget on it
+        #       buys less than covering the weights properly. Revisit if the
+        #       chosen weights sit at a boundary of their range.
+        #
+        # 24 trials over 54 points is ~44% coverage: real, not screening. The
+        # pins hold architecture fixed so the arm isolates the joint-embedding
+        # objective; they are choices, not measurements.
+        search_space:
+          n_layers: [2]
+          n_latent: [30]
+          n_hidden: [256]
+          dropout_rate: [0.1]
+          dispersion: ['gene-cell']
+          gene_likelihood: ['nb']
+
   embedding:
-    # Null lets DimReducer pick sqrt(N), which on 62,750 cells is ~250 --
-    # far too many. Set explicitly.
+    # MATCHED TO THE INTEGRATION STAGE 2026-08-23, so a refine latent and the
+    # DRVI latent it was fitted on are embedded the same way and only the LATENT
+    # differs between their figures. `orchestrator._dispatch_reduction` uses
+    # metric 'cosine' and leiden_resolution 0.8; this block used 'correlation'
+    # and 0.5, which is a different embedding recipe for the same cells.
+    #
+    # WHY cosine RATHER THAN correlation, beyond consistency. Both normalise
+    # away magnitude, but correlation also centres each cell's vector, which on
+    # a VAE latent subtracts a per-cell mean that carries signal. The measured
+    # consequence of getting the metric wrong here is on record: the DRVI
+    # cleaned latent embedded under scanpy's euclidean default gave 36 Leiden
+    # clusters against 19 under cosine, splitting populations cosine keeps whole.
+    #
+    # n_neighbors Null is CORRECT and stays: DimReducer._resolve_n_neighbors
+    # clamps it to what the cell count supports rather than taking sqrt(N)
+    # blindly -- it resolved to 383 on this 147k-cell reference. The comment
+    # this replaces described the old behaviour and the 62,750-cell object it
+    # was written for.
+    #
+    # min_dist 0.0 already matches and is what keeps clusters tight rather than
+    # diffuse; scanpy's own default is 0.5.
     n_neighbors: Null
-    metric: correlation
+    metric: cosine
     min_dist: 0.0
-    leiden_resolution: 0.5
+    leiden_resolution: 0.8
     random_state: 42
+
+    # Embed the OTHER latents too -- the base scVI fit and whichever comparison
+    # arms ran -- with these same settings, each into its own model directory.
+    # These settings, and not tuned ones, on purpose: a comparison in which the
+    # neighbourhood size or the metric also moved says nothing about the latents.
+    # Costs one neighbours+UMAP per extra latent (~1 h each at 150k cells), which
+    # is what to turn off here if a run is tight on wall time. The deliverable's
+    # own embedding is not affected either way.
+    #
+    # For a run that already finished without them, refine/embed_models.py
+    # backfills from the written h5ad without a GPU:
+    #   python -m refine.embed_models --cfg configs/refine_config.yaml --sample S
+    compare_models: true
 
   report:
     # No real list exists yet. These four are placeholders purely to exercise

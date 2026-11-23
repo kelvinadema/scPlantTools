@@ -119,6 +119,7 @@ samples:
   
   GSE155304_sNucRNA-seq_rep4:
     batch: GSE155304_sNucRNA-seq_rep4
+    tech: 10xv2  # 2026-09-21 chemistry recheck: v2, not the v3 default; results/mapping holds the v2 remap since 2026-09-29
     sample_type: nuclei
     mapping_config: arabidopsis
     qc_metrics: arabidopsis

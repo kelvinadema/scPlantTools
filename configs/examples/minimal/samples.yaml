@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=../../schemas/sample_sheet.schema.json
+# Example only: copy to configs/local and edit paths before running.
+defaults:
+  fallback: ratio_global
+  mapper: alevin
+  mapping_config: default
+  qc_filter: default
+  qc_metrics: default
+  sample_type: protoplast
+  tech: 10xv3
+samples:
+  example_cell:
+    sample_type: protoplast
+    batch: example_cells
+    fastq1:
+    - data/example/cells_R1.fastq.gz
+    fastq2:
+    - data/example/cells_R2.fastq.gz
+  example_nucleus:
+    sample_type: nuclei
+    batch: example_nuclei
+    fastq1:
+    - data/example/nuclei_R1.fastq.gz
+    fastq2:
+    - data/example/nuclei_R2.fastq.gz

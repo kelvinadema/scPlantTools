@@ -134,6 +134,75 @@ class scArchesIntegrator:
                 adata = adata[:, present].copy()
         return self.model_cls.load(str(self.ref_model_path), adata = adata)
 
+    def _blank_query_labels(self, query_adata, ref_model):
+        """Reset the query's labels column to the reference's unlabeled category.
+
+        Only touches the surgery copy, never the object that gets saved, so the
+        query's own `.obs` survives into the output unchanged.
+
+        WHY THIS IS NOT OPTIONAL, and why it is not scANVI-only. A reference
+        trained with a real `labels_key` registers that column's categories, and
+        `transfer_field` re-runs the query through the SAME CategoricalDtype with
+        `extend_categories=False` -- for SCANVI explicitly (it drops the kwarg and
+        hardcodes False, "don't extend labels for query data"), for a plain
+        CategoricalObsField by default. `_make_column_categorical` then raises
+        ValueError on any value outside that mapping, because unmatched rows come
+        back as code -1.
+
+        The query reliably HAS such a value. Orchestrator's `_sanitize_obs` fills
+        a column a sample lacks with the literal 'Unknown', and the query samples'
+        mapping artifacts carry no labels column at all -- so every query cell
+        arrives labelled 'Unknown', which is in no reference mapping. scvi's own
+        `allow_missing_labels` path does not fire either: it only helps when the
+        column is ABSENT, and sanitization guarantees it is present.
+
+        Both refine-derived references here are affected (each registers
+        `labels_key: seed_combined`), which is why this is keyed on the model's
+        registry rather than on `model_class == 'SCANVI'`. A reference trained
+        with no labels_key registers the synthetic '_scvi_labels' and is skipped.
+
+        Args:
+            query_adata (AnnData): The surgery copy, modified in place.
+            ref_model: The loaded reference model, read for its labels registry.
+        """
+        from scvi import REGISTRY_KEYS
+
+        try:
+            state = ref_model.adata_manager.get_state_registry(REGISTRY_KEYS.LABELS_KEY)
+        except (KeyError, AttributeError):
+            return
+
+        labels_key = getattr(state, 'original_key', None)
+        # A reference set up with labels_key=None registers the synthetic
+        # '_scvi_labels' constant instead; there is no user column to blank and
+        # transfer_field builds it itself.
+        if not labels_key or str(labels_key).startswith('_scvi'):
+            return
+
+        # `list(...)` around it, never `x or []` -- categorical_mapping is a numpy
+        # array and its truth value raises on more than one element.
+        raw_mapping = getattr(state, 'categorical_mapping', None)
+        mapping = [] if raw_mapping is None else [str(m) for m in raw_mapping]
+        unlabeled = getattr(state, 'unlabeled_category', None)
+        if unlabeled is None:
+            # A plain SCVI reference has no unlabeled_category, but the query is
+            # genuinely unlabelled and still has to land on a REGISTERED level.
+            # The refine cohorts carry scANVI's own 'Unassigned' as a real class,
+            # so prefer it and fall back to the first level only to stay running
+            # on a reference that has no such convention.
+            unlabeled = 'Unassigned' if 'Unassigned' in mapping else (mapping[0] if mapping else None)
+        if unlabeled is None:
+            return
+
+        present = set(query_adata.obs[labels_key].astype(str).unique()) if labels_key in query_adata.obs else set()
+        foreign = sorted(present - set(map(str, mapping)))
+        self.logger.info(
+            "[scArches] Blanking query labels '{}' to '{}' for surgery ({} cells){}".format(
+                labels_key, unlabeled, query_adata.n_obs,
+                "; unregistered values replaced: {}".format(foreign) if foreign else ""))
+        query_adata.obs[labels_key] = pd.Categorical(
+            [unlabeled] * query_adata.n_obs, categories=mapping or [unlabeled])
+
     def _map_query_ref(self, ref_model, ref_adata, query_adata, save: bool=True):
         """Run the surgery: align the query, load_query_data, then fine-tune.
 
@@ -155,6 +224,7 @@ class scArchesIntegrator:
         # to the reference's registered genes in place. On a copy, so genes the
         # query has beyond the reference's survive into the saved output.
         query_aligned = query_adata.copy()
+        self._blank_query_labels(query_aligned, ref_model)
         self.model_cls.prepare_query_anndata(query_aligned, ref_model)
         model = self.model_cls.load_query_data(query_aligned, ref_model)
         # weight_decay=0.0 is the canonical scArches setting: it freezes the

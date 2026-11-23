@@ -1,15 +1,8 @@
 """
-Wiring smoke: is the repo internally consistent and are the environments real?
+Portable source/configuration wiring. Local environment/results checks live in tests/site/.
 
-THIS IS THE TEST TO RUN BEFORE SUBMITTING A BIG JOB. It needs no data and no
-GPU, takes a couple of seconds, and catches the failures that actually waste an
-allocation: a batch script pointing at a module that was renamed, a config
-referencing a file that moved, an environment that does not exist, an entrypoint
-that raises on import.
-
-It deliberately does NOT import any stage package -- it shells out or reads
-files, so it runs in any environment. That is also what lets it check all five
-environments from one process.
+These checks inspect source and YAML without importing stage packages. They do
+not depend on the developer's installed conda environments or live results.
 
 WHAT IT WILL NOT CATCH: anything about correctness. A pipeline that runs
 end-to-end and produces wrong numbers passes every test here. That is what
@@ -50,16 +43,6 @@ STAGE_ENVS = {
 }
 
 
-def _conda_envs():
-    """Env names known to conda, or None if conda is unavailable."""
-    if shutil.which('conda') is None:
-        return None
-    try:
-        out = subprocess.run(['conda', 'env', 'list', '--json'],
-                             capture_output=True, text=True, timeout=60)
-        return {pathlib.Path(p).name for p in json.loads(out.stdout).get('envs', [])}
-    except Exception:
-        return None
 
 
 # ---------------------------------------------------------------- environments
@@ -82,12 +65,6 @@ def test_every_declared_env_has_a_manifest():
             'no envs/{}.yml for an env the pipeline dispatches into'.format(env)
 
 
-def test_every_declared_env_exists_on_this_machine():
-    envs = _conda_envs()
-    if envs is None:
-        pytest.skip('conda not available')
-    missing = sorted(set(STAGE_ENVS.values()) - envs)
-    assert not missing, 'declared but not installed: {}'.format(', '.join(missing))
 
 
 # --------------------------------------------------------------------- packages
@@ -101,7 +78,9 @@ def test_every_stage_package_exists():
 # ---------------------------------------------------------------- batch scripts
 
 def _batch_scripts():
-    return sorted((REPO_ROOT / 'batch_scripts').rglob('*.sh'))
+    scripts = sorted((REPO_ROOT / 'batch_scripts').rglob('*.sh'))
+    assert scripts, 'public launchers are missing from the checkout'
+    return scripts
 
 
 def test_batch_scripts_are_syntactically_valid():
@@ -173,37 +152,6 @@ def test_pipeline_config_subconfigs_exist():
         assert (REPO_ROOT / rel).exists(), 'configs.{} -> missing {}'.format(key, rel)
 
 
-def test_target_files_referenced_by_batch_scripts_are_well_formed():
-    """
-    `batch_scripts/targets/*.txt` map an array index to a target. A blank file, or
-    one whose count drifts from the `--array` range, strands tasks silently.
-    """
-    tdir = REPO_ROOT / 'batch_scripts/targets'
-    if not tdir.is_dir():
-        pytest.skip('no targets directory')
-    for f in sorted(tdir.glob('*.txt')):
-        entries = [ln.split('#')[0].strip() for ln in f.read_text().split('\n')]
-        entries = [e for e in entries if e]
-        assert entries, '{} has no usable entries'.format(f.name)
-        assert len(entries) == len(set(entries)), \
-            '{} has duplicate targets -- two array indices would run the same one'.format(f.name)
 
 
 # ------------------------------------------------------------------ results tree
-
-def test_results_tree_has_no_stale_top_level_dirs():
-    """
-    Guards the 2026-08-06 reorganisation: `annotation/results/` (doubled segment)
-    and `annotation/review/` (split from its dataset) must not reappear, and
-    caches belong under `cache/`.
-    """
-    cfg = yaml.safe_load((REPO_ROOT / 'configs/annotation_config.yaml').read_text())
-    out = cfg['AnnotateConfigs'].get('output_dir')
-    if not out or not pathlib.Path(out).is_dir():
-        pytest.skip('annotation output_dir not present on this machine')
-    root = pathlib.Path(out)
-    assert not (root / 'results').exists(), 'results/annotation/results/ is back'
-    assert not (root / 'review').exists(), 'annotation/review/ is back; it belongs per-dataset'
-    for cache in ('orthofinder', 'primary_transcripts', 'genemaps'):
-        assert not (root / cache).exists(), \
-            '{} is a regenerable cache and belongs under cache_dir'.format(cache)

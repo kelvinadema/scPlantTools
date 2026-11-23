@@ -32,7 +32,8 @@ from .utils import load_config
 from .samples import load_samples, resolve_index_ref, SampleConfigError
 from .cohorts import resolve_cohort, CohortConfigError
 from .targets import (expand_group, expand_sample_list, load_integration_config,
-                      parse_batch_key, resolve_batch_assignments, TargetConfigError)
+                      parse_batch_key, parse_covariates, resolve_batch_assignments,
+                      TargetConfigError, parse_layer, expand_env_path)
 from .io import _env_package_version
 from .config_spec import FILTER_MODES
 from . import config_spec as spec
@@ -1010,6 +1011,29 @@ def validate_integration(integration_config_path, sample_config_path, report=Non
         # docs/decisions/batch-keys-and-confounds.md.
         _STAMPED_OBS = ('batch', 'sample', 'tech', 'sample_type', 'prep', 'treatment', 'time_h')
         _PARTIAL_STAMPED_OBS = ('prep', 'treatment', 'time_h')
+
+        # Label-space keys (2026-09-10; docs/decisions/two-layer-label-spaces.md).
+        if 'layer' in entry:
+            try:
+                parse_layer(entry['layer'])
+            except TargetConfigError as e:
+                report.error('{}: {}'.format(label, e))
+        hvg_bk = entry.get('hvg_batch_key')
+        if hvg_bk and obs_per_sample is not None and hvg_bk not in obs_union \
+                and hvg_bk not in _STAMPED_OBS:
+            report.error(
+                "{}: hvg_batch_key '{}' is not an .obs column of any mapped sample, nor one "
+                'stamped at concatenation ({}); HVGSelector would raise on it.'.format(
+                    label, hvg_bk, ', '.join(_STAMPED_OBS)))
+        if entry.get('exclude_genes'):
+            try:
+                gene_list = expand_env_path(entry['exclude_genes'], 'exclude_genes')
+            except TargetConfigError as e:
+                report.error('{}: {}'.format(label, e))
+            else:
+                if not Path(gene_list).is_file():
+                    report.error('{}: exclude_genes file does not exist: {}'.format(
+                        label, gene_list))
         if 'batch_key' in entry:
             # One string, a list to be combined, or a per-cohort mapping -- all
             # three reduce to "these keys, over these samples", and every key is
@@ -1105,7 +1129,20 @@ def validate_integration(integration_config_path, sample_config_path, report=Non
         if covariates and obs_per_sample is not None:
             if isinstance(covariates, str):
                 covariates = [covariates]
+            # Both accepted shapes reduce to one flat list of column names. The
+            # object form ({categorical: [...], continuous: [...]}) was rejected
+            # by config_spec until 2026-08-17; walking it as a plain list here
+            # checked for .obs columns literally named 'categorical'.
+            if isinstance(covariates, dict):
+                parsed = parse_covariates(covariates)
+                covariates = list(parsed['categorical']) + list(parsed['continuous'])
             for cov in covariates:
+                # Stamped columns are written onto .obs at concatenation time
+                # (orchestrator.py:210-225) and are legitimately absent from
+                # every per-sample h5ad. Held to the same allowance batch_key
+                # already gets a few lines above.
+                if cov in _STAMPED_OBS:
+                    continue
                 if cov not in obs_union:
                     report.error(
                         "{}: covariate '{}' is not an .obs column of any mapped sample. scVI "

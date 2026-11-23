@@ -242,6 +242,7 @@ TEST_SUITES = [
     ('annotation',  'scAnnotationV3.12'),
     ('markerid',    'scMarkersV3.12'),
     ('e2e',         'scMappingV3.12'),
+    ('site',        None),
 ]
 
 
@@ -255,7 +256,7 @@ def cmd_test(args) -> int:
         int: 0 when every suite passed, else 1.
     """
     root = _repo_root()
-    suites = TEST_SUITES
+    suites = [s for s in TEST_SUITES if s[0] != 'site']
     if args.suite:
         suites = [s for s in TEST_SUITES if s[0] == args.suite]
         if not suites:
@@ -273,7 +274,12 @@ def cmd_test(args) -> int:
     for name, env in suites:
         subtree = root / 'tests' / name
         if not subtree.is_dir():
-            results.append((name, env, 'absent', 0)); continue
+            results.append((name, env, 'FAIL: suite absent', 1))
+            worst = 1
+            continue
+        if args.fast and name == 'e2e':
+            results.append((name, env, 'excluded by --fast', 0))
+            continue
 
         argv = ['python', '-m', 'pytest', str(subtree)] + base
         if env and shutil.which('conda'):
@@ -281,17 +287,17 @@ def cmd_test(args) -> int:
 
         print('\n=== tests/{}  (env: {}) ==='.format(name, env or CURRENT_ENV()), file=sys.stderr)
         code = subprocess.call(argv, cwd=str(root))
-        # 5 is pytest's "no tests collected", which is not a failure here.
-        ok = 'pass' if code in (0, 5) else 'FAIL'
-        worst = worst if code in (0, 5) else 1
+        # Required suites must actually collect tests.
+        ok = 'pass' if code == 0 else 'FAIL'
+        worst = worst if code == 0 else 1
         results.append((name, env, ok, code))
 
     print('\n' + '=' * 58)
     for name, env, ok, code in results:
         print('  {:<12} {:<22} {}{}'.format(
-            name, env or '(current)', ok, '' if code in (0, 5) else ' (exit {})'.format(code)))
+            name, env or '(current)', ok, '' if code == 0 else ' (exit {})'.format(code)))
     print('=' * 58)
-    print('ALL PASSED' if worst == 0 else 'FAILURES ABOVE')
+    print('SELECTED SUITES PASSED' if worst == 0 else 'FAILURES ABOVE')
     return worst
 
 

@@ -19,9 +19,20 @@ What a run produces:
 
     {output_dir}/{sample}/{run}/
         {sample}_{run}.h5ad        cells x genes, with the columns below
-        scvi/  scanvi/             the two trained models
         {sample}_{run}_labels.tsv  per-cell evidence, joinable on barcode
         {sample}_{run}_run.json    what actually ran, for the report
+
+        SCVI/                      the base fit that seeds scANVI, untuned
+        SCANVI/                    the deliverable -- model, diagnostics, AND
+                                   the UMAP figures, which are built on its
+                                   latent and used to sit at the run root under
+                                   a name that identified no model at all
+        SCVI_scibtuned/            optional comparison arm, scib-tuned
+        JointEmbeddingSCVI/        optional comparison arm, scib-tuned
+
+    One directory per trained model. Run-spanning artifacts stay at the root,
+    because they are not any one model's. The tuned scVI arm cannot also be
+    called SCVI -- the base fit owns that name.
 
 and in the h5ad, keyed by `{run}` (`combined` for the normal route):
 
@@ -30,6 +41,14 @@ and in the h5ad, keyed by `{run}` (`combined` for the normal route):
                                whole reason to run scANVI at all
     .obsm['X_umap_{run}']      2-D, from the scANVI latent
     .obs['leiden_{run}']       clusters on the same graph the UMAP came from
+    .obsm['X_umap_scVI_{run}'], ['X_umap_scVItuned_{run}'],
+    .obsm['X_umap_jointSCVI_{run}'] and their `leiden_` counterparts -- the
+                               same embedding on each OTHER latent this run
+                               fitted, one per model directory, so the arms can
+                               be compared to the deliverable by eye rather
+                               than only through a metrics table. Keyed by the
+                               LATENT, never by the run alone. See
+                               refine/embed_models.py.
     .obs['seed_{run}']         what was seeded, before the model saw anything
     .obs['seed_support_{run}'] how many methods independently seeded that cell
     .obs['prediction_{run}']   scANVI's raw call
@@ -49,8 +68,9 @@ import pandas as pd
 import scanpy as sc
 
 from shared.decisions import check_parent, read_decisions
-from shared.dimred import DimReducer, UMAPPlotter
 from shared.groups import check_parents, read as read_groups
+
+from .embed_models import COMPARISON_MODELS, embed_models, embed_one, latent_specs
 
 from .labels import (UNASSIGNED, UNKNOWN_PREFIX, build_group_seed_labels,
                      build_seed_labels, summarise)
@@ -138,7 +158,7 @@ class RefineRun:
                  methods=None, batch_key=None, counts_layer='corrected_counts',
                  covariates=None, seeds=None, safeguards=None, model=None, embedding=None,
                  ontology_file=None, ontology_extensions=(), allow_stale=False,
-                 groups_path=None, method=None):
+                 groups_path=None, method=None, reuse_models=True):
         self.sample = sample
         # `run` names the outputs and every .obs/.obsm key. 'combined' for the
         # normal route; a method name when spot-checking one in isolation, so
@@ -161,6 +181,7 @@ class RefineRun:
         self.ontology_file = ontology_file
         self.ontology_extensions = list(ontology_extensions or ())
         self.allow_stale = allow_stale
+        self.reuse_models = reuse_models
 
         self.adata = None
         self.labels = None
@@ -174,6 +195,31 @@ class RefineRun:
     def method_dir(self, method):
         """This run's directory under the annotation tree."""
         return self.sample_dir / method
+
+    def model_dir(self, name):
+        """This run's directory for one model's artifacts.
+
+            results/refine/{sample}/{run}/{MODEL}/
+
+        One directory per trained model rather than a flat run directory,
+        because the run produces up to four of them and the flat layout gave no
+        way to tell whose a figure was. The UMAP is the case that actually
+        misled: it is built on the scANVI latent, but sat at the run root under
+        a name (`..._X_umap_{run}`) that named the RUN twice and no model at
+        all.
+
+        Names are the model class as scvi spells it, except the tuned scVI
+        comparison arm, which cannot also be called `SCVI` -- the base fit owns
+        that. Run-spanning artifacts (the h5ad, the labels TSV, the run record)
+        stay at the run root, since they are not any one model's.
+
+        Args:
+            name (str): Directory name, e.g. 'SCANVI'.
+
+        Returns:
+            Path: The directory. Not created here; each writer mkdirs its own.
+        """
+        return self.out_dir / name
 
     def scores_path(self, method):
         """Path to the per-cell geneset scores stage 1 wrote."""
@@ -276,10 +322,12 @@ class RefineRun:
             quantile=self.seeds.get('quantile', 0.9),
             margin=self.seeds.get('margin', 0.25),
             min_seed_cells=self.seeds.get('min_seed_cells', 10),
-            name_map=names)
+            name_map=names,
+            quantile_scope=self.seeds.get('quantile_scope', 'group'))
 
         self.record.update({
             'mode': 'combined',
+            'seed_quantile_scope': self.seeds.get('quantile_scope', 'group'),
             'methods': methods,
             'group_hash': self.document.hash,
             'group_source': self.document.source,
@@ -373,12 +421,376 @@ class RefineRun:
             raise RefineError('execute() called before prepare()')
         self.out_dir.mkdir(parents=True, exist_ok=True)
 
+        # THE DELIVERABLE CHAIN. scVI seeds scANVI, scANVI produces the labels,
+        # and the UMAP is built on the scANVI latent. Untuned on purpose: this
+        # scVI exists to seed scANVI, and comparing refine runs to each other
+        # only works if the base model is held fixed.
         scvi_model = self._fit_scvi(registry)
         scanvi_model = self._fit_scanvi(scvi_model)
         evidence = self._predict(scanvi_model)
         self._embed()
+
+        # WRITE THE DELIVERABLE NOW, BEFORE THE OPTIONAL ARMS RUN.
+        #
+        # This ordering was wrong until 2026-08-18 and cost a real run. The arms
+        # sat between _embed and _write with a comment claiming they were
+        # "ordered last so a failure cannot cost the labels" -- which they were
+        # not, because _write came after them. Job 42068733 trained scVI and
+        # scANVI over 4 h, produced the UMAP, then died in the scVI arm on a
+        # library incompatibility, and because _write had never run the h5ad,
+        # the labels TSV and the run record were all lost. 18 h for two model
+        # checkpoints and some figures.
+        #
+        # A try/except around the arms is not sufficient on its own: it catches
+        # an exception, not a SIGKILL, an OOM or the job hitting its wall clock,
+        # and the arms are the part most likely to hit all three. So the
+        # deliverable is written first and unconditionally.
         self._write(evidence)
+
+        # THE COMPARISON ARMS. Scored on scib, which is only possible here:
+        # scib's bio-conservation half needs labels, and until _predict has run
+        # the only labels in the object are the cells carrying a seed. After it
+        # every cell has a propagated call, so the metric is computed over a
+        # full partition rather than a sparse one.
+        #
+        # Non-fatal by construction. They are a comparison, and no failure in
+        # them should turn a completed refinement into a failed job.
+        arms = {}
+        try:
+            arms = self._fit_comparison_arms(registry)
+        except Exception as exc:                          # noqa: BLE001
+            logger.error('[REFINE] %s/%s: comparison arms failed (%s: %s). The '
+                         'deliverable above is unaffected and already written.',
+                         self.sample, self.run, type(exc).__name__, exc)
+            self.record['comparison'] = {'enabled': True, 'failed': True,
+                                         'error': '{}: {}'.format(type(exc).__name__, exc)}
+
+        # EMBED THE ARMS, which _embed above could not: it runs before they are
+        # fitted, so at that point `X_scVItuned_{run}` and `X_jointSCVI_{run}`
+        # are simply not in .obsm and `embed_models` finds only the base scVI.
+        # That ordering is deliberate -- the deliverable is written to disk
+        # before anything optional is attempted -- so the fix is a second
+        # embedding pass here rather than moving _embed after the arms.
+        #
+        # Same `embed_models` the earlier pass uses, so the arms get the same
+        # neighbour graph, metric, min_dist, resolution and plotnine figures as
+        # the deliverable, and only the LATENT differs between them. Comparing
+        # arms to the deliverable is the entire point of fitting them, and a
+        # comparison across two different embedding recipes is not one.
+        #
+        # Non-fatal for the same reason the arms themselves are: the deliverable
+        # is already on disk and a missing comparison figure must not fail a
+        # completed refinement.
+        if arms:
+            try:
+                record = dict(self.record.get('embedding_models') or {})
+                embed_models(self.adata, sample=self.sample, run=self.run,
+                             out_dir=self.out_dir, models=sorted(arms), cfg=self.embedding_cfg,
+                             batch_key=self.batch_key, do_leiden=True, log=logger,
+                             record=record)
+                self.record['embedding_models'] = record
+            except Exception as exc:                      # noqa: BLE001
+                logger.error('[REFINE] %s/%s: embedding the comparison arms '
+                             'failed (%s: %s). Their latents are in the h5ad; '
+                             'run scripts/refine_embed_arms.py to backfill.',
+                             self.sample, self.run, type(exc).__name__, exc)
+
+        # Only if an arm actually produced a latent: fold it into the h5ad and
+        # refresh the run record. Skipped entirely when both are off or both
+        # failed, so the common path pays for one h5ad write, not two.
+        if arms:
+            self._write(evidence)
         return self.record
+
+    def _reuse_model(self, model_class, out_dir, label):
+        """A previously trained model from this run's own tree, or None.
+
+        WHY THIS EXISTS HERE AND NOT IN SingleCellIntegrate. The integrator does
+        have a skip -- `_integrate_scvi` returns a registry-cached model when one
+        exists -- but it is gated on `persist`, and refine passes
+        `persist=False` on purpose: the integration registry is keyed on
+        integration targets and these are not those, so a disposable run must not
+        resolve to some previously-registered model that happens to share a name.
+        That guard is right, and it makes the registry skip unreachable from
+        here. The integrator also never writes these models (`save=self.persist`
+        is False); refine saves them itself.
+
+        So the reuse is keyed on the FILESYSTEM instead, which is safe precisely
+        where the registry was not: `results/refine/{sample}/{run}/{MODEL}/` is
+        specific to one sample, one run and one model, so there is no name to
+        collide over.
+
+        Correctness rests on scvi's own check, not on ours: `cls.load(path,
+        adata=...)` validates the saved setup registry against the AnnData it is
+        handed and raises when they disagree, so a model trained on a different
+        cohort, layer or batch key cannot be silently adopted. A load that fails
+        for any reason falls through to training rather than killing the run.
+
+        `--force` retrains everything.
+
+        Args:
+            model_class (str): A key of MODEL_CLASSES.
+            out_dir (Path): Directory holding `model.pt`.
+            label (str): Human-readable stage name for the log.
+
+        Returns:
+            The loaded model, or None to train.
+        """
+        if not self.reuse_models:
+            return None
+        path = Path(out_dir)
+        if not (path / 'model.pt').exists():
+            return None
+        from integration.integrationutils import resolve_model_class
+        try:
+            model = resolve_model_class(model_class).load(str(path), adata=self.adata)
+        except Exception as exc:                          # noqa: BLE001
+            logger.warning('[REFINE] %s/%s: found a %s model at %s but could not '
+                           'reuse it (%s: %s); retraining.', self.sample, self.run,
+                           label, path, type(exc).__name__, exc)
+            return None
+        logger.info('[REFINE] %s/%s: reusing the existing %s model at %s -- not '
+                    'retraining. Pass --force to override.',
+                    self.sample, self.run, label, path)
+        return model
+
+    @staticmethod
+    def _train_args(cfg):
+        """`model.train()` kwargs from a config block: epochs and early stopping.
+
+        EARLY STOPPING DOES NOT BITE ON ITS OWN, and the reason is worth stating
+        where it will be read. `max_epochs` sets KL warmup too --
+        normalize_kl_warmup derives it as 50% of the effective max_epochs when
+        unset -- and the objective is a moving target while the KL term is still
+        being annealed. scvi's patience is 45 epochs on `elbo_validation`, so the
+        earliest a stop can fire is warmup + patience:
+
+            max_epochs 400  -> warmup 200, earliest stop ~245 epochs
+            max_epochs 120  -> warmup  60, earliest stop ~105
+            max_epochs  60  -> warmup  30, earliest stop ~ 60 (i.e. never)
+
+        At 400 that is 80 of the 131 minutes this fit costs on a 147k-cell
+        object -- early stopping turns `max_epochs` into a ceiling rather than a
+        target, but it cannot rescue a ceiling set far above what the data needs.
+        scvi's own heuristic for 147,697 cells is 54 epochs. Lowering
+        `max_epochs` is what captures the saving; this is the safety net.
+
+        Args:
+            cfg (dict): A config block carrying `max_epochs` and optionally
+                `early_stopping`, `early_stopping_patience`,
+                `check_val_every_n_epoch`.
+
+        Returns:
+            dict: kwargs for `model.train()`.
+        """
+        args = {}
+        if cfg.get('max_epochs'):
+            args['max_epochs'] = int(cfg['max_epochs'])
+        # DATALOADER WORKERS. scvi's AnnDataLoader takes an explicit num_workers
+        # if given and otherwise falls back to scvi.settings.dl_num_workers,
+        # which defaults to 0 -- i.e. every batch is collated in the training
+        # process, between GPU steps. Measured cost on job 42068733: four
+        # concurrent tuning trials on 147k cells took ~2 h 20 m each against ~20
+        # min for the same fit run solo, because four trials sharing 32 CPUs are
+        # CPU-starved on collation rather than GPU-bound. lightning warns about
+        # it in that run's log.
+        #
+        # Set per block rather than through scvi.settings, which is process
+        # global: the base fit has the whole node and the tuning trials have a
+        # quarter of it each, so they want different numbers, and an explicit
+        # value lands in the run record where a global would not.
+        workers = cfg.get('dataloader_workers')
+        if workers:
+            args['datasplitter_kwargs'] = {
+                'num_workers': int(workers),
+                # Rebuilding worker processes every epoch is most of what
+                # workers cost on short epochs; keeping them alive is the point.
+                'persistent_workers': True,
+            }
+        if cfg.get('early_stopping'):
+            args['early_stopping'] = True
+            # Validation must actually be computed for the monitor to see it.
+            args['check_val_every_n_epoch'] = int(cfg.get('check_val_every_n_epoch', 1))
+            if cfg.get('early_stopping_patience') is not None:
+                args['early_stopping_patience'] = int(cfg['early_stopping_patience'])
+        return args
+
+    def _fit_comparison_arms(self, registry=None):
+        """Fit the scib-tuned comparison latents beside the deliverable.
+
+        Two optional arms, both off by default, both tuned on scib rather than
+        on ELBO, and both scored against scANVI's PROPAGATED annotation:
+
+            scvi                .obsm['X_scVItuned_{run}']
+            joint_embedding     .obsm['X_jointSCVI_{run}']
+
+        Neither replaces anything. `X_scANVI_{run}` stays the deliverable, the
+        labels stay scANVI's, and the UMAP stays on the scANVI latent -- so
+        disabling both returns the stage to exactly what it did before.
+
+        WHY THE ARMS RUN HERE AND NOT BESIDE THE BASE FIT. scib's objective is
+        half batch correction and half bio conservation, and the bio half is
+        scored against labels. Before `_predict` the only labels in the object
+        are the seeds, which are ~7.5% of cells; scoring a latent on those
+        measures how well it organises a small, non-random subset. After
+        `_predict` every cell carries a propagated call, so the same metric is
+        computed over a complete partition. That is the whole reason this is a
+        separate stage rather than a flag on `_fit_scvi`.
+
+        WHY scib AND NOT elbo_validation. The base scVI is fitted at scvi's
+        constructor defaults deliberately. These arms exist to be compared, and
+        the parameters that distinguish them -- JointEmbeddingSCVI's four loss
+        weights especially -- trade reconstruction against embedding structure,
+        which is exactly what a likelihood cannot rank and what a composite
+        metric can.
+
+        Args:
+            registry (CacheUtils, optional): Passed through; unused at
+                `persist=False`.
+
+        Returns:
+            dict: {arm name: fitted model}, empty when both are disabled.
+        """
+        cfg = dict(self.model_cfg.get('comparison') or {})
+        arms = (
+            ('scvi', 'SCVI', 'SCVI_scibtuned', 'X_scVItuned_{}'.format(self.run)),
+            ('joint_embedding', 'JointEmbeddingSCVI', 'JointEmbeddingSCVI',
+             'X_jointSCVI_{}'.format(self.run)),
+        )
+        enabled = [a for a in arms if (cfg.get(a[0]) or {}).get('enabled', False)]
+        if not enabled:
+            self.record['comparison'] = {'enabled': False}
+            return {}
+
+        labels_key = self._comparison_labels_key(cfg)
+        fitted, record = {}, {'enabled': True, 'labels_key': labels_key, 'arms': {}}
+        for name, model_class, subdir, latent_key in enabled:
+            # PER ARM, so one arm's failure does not silently cost the other.
+            # On job 42083220 the scVI arm died on an ARPACK failure inside
+            # scib's PCA; with a single try/except one level up, the
+            # JointEmbeddingSCVI arm -- the one actually worth running -- was
+            # never attempted. These are independent comparisons and a library
+            # fault in one says nothing about the other.
+            try:
+                model, arm_record = self._fit_one_comparison_arm(
+                    name=name, model_class=model_class, subdir=subdir,
+                    latent_key=latent_key, cfg=cfg, labels_key=labels_key,
+                    registry=registry)
+            except Exception as exc:                      # noqa: BLE001
+                logger.error('[REFINE] %s/%s: comparison arm %r failed (%s: %s); '
+                             'continuing with the remaining arm(s).',
+                             self.sample, self.run, name, type(exc).__name__, exc)
+                record['arms'][name] = {'model_class': model_class, 'failed': True,
+                                        'error': '{}: {}'.format(type(exc).__name__, exc)}
+                continue
+            fitted[name] = model
+            record['arms'][name] = arm_record
+        self.record['comparison'] = record
+        return fitted
+
+    def _comparison_labels_key(self, cfg):
+        """Which `.obs` column the scib bio-conservation half is scored against.
+
+        Defaults to `prediction_{run}` rather than `annotation_{run}`, and the
+        difference matters. `annotation_` is the deliverable and carries
+        UNASSIGNED for every cell the safeguards demoted -- a REJECT BIN, not a
+        cell type, holding whatever was low-confidence or high-novelty. Handing
+        it to scib as a label would reward a latent for making that bin compact,
+        which is backwards: it is heterogeneous by construction.
+        `prediction_` is the same calls before demotion, so every cell carries
+        its best class and the partition is complete.
+
+        Args:
+            cfg (dict): The `comparison:` config block.
+
+        Returns:
+            str: An existing `.obs` column name.
+
+        Raises:
+            RefineError: If the configured column is not in `.obs`, which means
+                the arms were asked to run before `_predict`.
+        """
+        stem = cfg.get('labels_key', 'prediction')
+        key = '{}_{}'.format(stem, self.run)
+        if key not in self.adata.obs:
+            raise RefineError(
+                "comparison arms need '{}' in .obs and it is absent. They run "
+                'after _predict for exactly this reason -- scib cannot score bio '
+                'conservation before the labels exist.'.format(key))
+        return key
+
+    def _fit_one_comparison_arm(self, name, model_class, subdir, latent_key,
+                                cfg, labels_key, registry=None):
+        """One comparison arm. See `_fit_comparison_arms` for why these exist.
+
+        Args:
+            name (str): Config key under `comparison:`.
+            model_class (str): A key of `MODEL_CLASSES`.
+            subdir (str): Output directory under the run's own tree.
+            latent_key (str): `.obsm` key for the fitted latent.
+            cfg (dict): The `comparison:` block.
+            labels_key (str): `.obs` column for scib's bio half.
+            registry (CacheUtils, optional): Passed through.
+
+        Returns:
+            tuple: (fitted model, record dict).
+        """
+        from integration.integrate import SingleCellIntegrate
+
+        out = self.model_dir(subdir)
+        reused = self._reuse_model(model_class, out, 'comparison arm {!r}'.format(name))
+        if reused is not None:
+            self.adata.obsm[latent_key] = reused.get_latent_representation()
+            return reused, {'model_class': model_class, 'reused_from': str(out),
+                            'latent_key': latent_key}
+
+        arm = dict(cfg.get(name) or {})
+        tune = bool(arm.get('tune', cfg.get('tune', True)))
+        metric = arm.get('tune_metric', cfg.get('tune_metric', 'Total'))
+        n_batches = (self.adata.obs[self.batch_key].nunique()
+                     if self.batch_key and self.batch_key in self.adata.obs else 1)
+        if tune and n_batches < 2 and metric == 'Total':
+            # Same guard as the base fit: scib's batch half needs >= 2 batches,
+            # and scoring 40% of the objective as zero makes every trial look
+            # equally bad instead of failing loudly.
+            logger.warning(
+                '[REFINE] %s has %d batch(es); comparison arm %r falls back from '
+                '"Total" to "Bio conservation" and is NOT scored on batch '
+                'correction.', self.sample, n_batches, name)
+            metric = 'Bio conservation'
+
+        merged = {**cfg, **arm}
+        train_args = self._train_args(merged)
+
+        integrator = SingleCellIntegrate(
+            adata=self.adata, target='{}_{}_{}'.format(self.sample, self.run, name),
+            do_tune=tune, do_hvg=False, output_dir=str(self.out_dir),
+            covariates={'categorical': [], 'continuous': self.covariates},
+            logger=logger, model_class=model_class,
+            n_trials=arm.get('n_trials', cfg.get('n_trials', 8)),
+            tune_metric=metric,
+            model_args={'model_params': dict(arm.get('model_params') or {})},
+            train_args=train_args, registry=registry,
+            # Per-arm search space, merged over the class default by
+            # resolve_search_space. An arm needs this because the class default
+            # is sized for a from-scratch integration target, while an arm here
+            # has a fixed trial budget and a narrower question.
+            search_space=(arm.get('search_space') or cfg.get('search_space')),
+            persist=False, out_dir=out)
+
+        logger.info('[REFINE] comparison arm %r: %s, tune=%s, metric=%s, labels=%s',
+                    name, model_class, tune, metric if tune else '-', labels_key)
+        integrator.integrate(batch_key=self.batch_key, layer=self.counts_layer,
+                             labels_key=labels_key)
+        self.adata = integrator.adata
+        model = integrator.model
+        self.adata.obsm[latent_key] = model.get_latent_representation()
+        model.save(str(out), overwrite=True)
+        self._diagnostics(model_class, model, latent_key, out_dir=out)
+        return model, {'model_class': model_class, 'tune': tune,
+                       'tune_metric': metric if tune else '',
+                       'n_batches': int(n_batches), 'latent_key': latent_key,
+                       'params': integrator.resolved_model_params or {}}
 
     def _fit_scvi(self, registry=None):
         """Fit the unsupervised scVI model the scANVI model is built from.
@@ -387,6 +799,12 @@ class RefineRun:
             scvi.model.SCVI: The fitted model.
         """
         from integration.integrate import SingleCellIntegrate
+
+        reused = self._reuse_model('SCVI', self.model_dir('SCVI'), 'base scVI')
+        if reused is not None:
+            self.adata.obsm['X_scVI_{}'.format(self.run)] = reused.get_latent_representation()
+            self.record['scvi_params'] = {'reused_from': str(self.model_dir('SCVI'))}
+            return reused
 
         n_batches = (self.adata.obs[self.batch_key].nunique()
                      if self.batch_key and self.batch_key in self.adata.obs else 1)
@@ -404,9 +822,7 @@ class RefineRun:
         self.record.update({'n_batches': int(n_batches), 'tune': tune,
                             'tune_metric': metric if tune else ''})
 
-        train_args = {}
-        if self.model_cfg.get('max_epochs'):
-            train_args['max_epochs'] = int(self.model_cfg['max_epochs'])
+        train_args = self._train_args(self.model_cfg)
 
         integrator = SingleCellIntegrate(
             adata=self.adata, target='{}_{}'.format(self.sample, self.run),
@@ -423,7 +839,7 @@ class RefineRun:
             registry=registry,
             # Refinement owns its own output tree; the integration registry is
             # keyed on integration targets and these are not those.
-            persist=False, out_dir=self.out_dir / 'scvi')
+            persist=False, out_dir=self.model_dir('SCVI'))
 
         # labels_key is what makes the scib bio-conservation half meaningful
         # and what scANVI inherits below. See SingleCellIntegrate.integrate.
@@ -434,8 +850,9 @@ class RefineRun:
 
         model = integrator.model
         self.adata.obsm['X_scVI_{}'.format(self.run)] = model.get_latent_representation()
-        model.save(str(self.out_dir / 'scvi'), overwrite=True)
-        self._diagnostics('scVI', model, 'X_scVI_{}'.format(self.run))
+        model.save(str(self.model_dir('SCVI')), overwrite=True)
+        self._diagnostics('scVI', model, 'X_scVI_{}'.format(self.run),
+                          out_dir=self.model_dir('SCVI'))
         return model
 
     def _fit_scanvi(self, scvi_model):
@@ -448,6 +865,10 @@ class RefineRun:
             scvi.model.SCANVI: The fitted model.
         """
         from scvi.model import SCANVI
+
+        reused = self._reuse_model('SCANVI', self.model_dir('SCANVI'), 'scANVI')
+        if reused is not None:
+            return reused
 
         params = dict(self.model_cfg.get('scanvi_params') or {})
         model = SCANVI.from_scvi_model(
@@ -464,21 +885,32 @@ class RefineRun:
         logger.info('[REFINE] Training scANVI (%s)', train_args or 'scvi defaults')
         model.train(**train_args)
 
-        model.save(str(self.out_dir / 'scanvi'), overwrite=True)
+        model.save(str(self.model_dir('SCANVI')), overwrite=True)
         self.record['scanvi_train_args'] = train_args
-        self._diagnostics('scANVI', model, 'X_scANVI_{}'.format(self.run))
+        self._diagnostics('scANVI', model, 'X_scANVI_{}'.format(self.run),
+                          out_dir=self.model_dir('SCANVI'))
         return model
 
-    def _diagnostics(self, method, model, latent_key):
+    def _diagnostics(self, method, model, latent_key, out_dir=None):
         """Compute the evidence columns the safeguards and the report read.
 
         Kept whole rather than reduced to a verdict, so thresholds can move without
         retraining.
+
+        Args:
+            method (str): Model name, used in the artifact names.
+            model: The fitted model.
+            latent_key (str): `.obsm` key to run the diagnostics on.
+            out_dir (Path, optional): Where to write. Defaults to the run root
+                for backward compatibility; every caller passes that model's own
+                directory so a training curve sits beside the model it describes.
         """
         from integration.diagnostics import run_diagnostics
+        target = Path(out_dir) if out_dir is not None else self.out_dir
+        target.mkdir(parents=True, exist_ok=True)
         try:
             run_diagnostics(
-                self.adata, method, self.out_dir,
+                self.adata, method, target,
                 '{}_{}_{}'.format(self.sample, self.run, method.lower()),
                 model=model, batch_key=self.batch_key, latent_keys=[latent_key],
                 logger=logger, save_plot=True)
@@ -533,40 +965,41 @@ class RefineRun:
         return evidence
 
     def _embed(self):
-        """UMAP and Leiden on the scANVI latent, plus the figures."""
+        """UMAP and Leiden on the scANVI latent, plus the figures.
+
+        Then, unless `embedding.compare_models` is off, the same computation on
+        every OTHER latent this run produced -- the base scVI fit and whichever
+        comparison arms were enabled -- each into its own model directory. The
+        arms exist to be compared against the deliverable and the comparison a
+        person actually makes is visual; a training curve and a batch-mixing
+        table answer neither "does it separate the same populations" nor "does
+        it still mix the batches". See refine/embed_models.py for the key
+        naming, and note that the deliverable's own keys are unchanged.
+
+        Returns:
+            dict: `DimReducer.compute`'s result for the scANVI latent, which is
+                what the rest of the stage means by "the embedding".
+        """
         cfg = self.embedding_cfg
-        reducer = DimReducer(self.adata, logger=logger)
-        result = reducer.compute(
-            use_rep='X_scANVI_{}'.format(self.run),
-            key=self.run,
-            n_neighbors=cfg.get('n_neighbors'),
-            metric=cfg.get('metric', 'correlation'),
-            min_dist=cfg.get('min_dist', 0.0),
-            leiden_resolution=cfg.get('leiden_resolution', 0.5),
-            random_state=cfg.get('random_state', 42),
-            do_leiden=True)
+        specs = {s.subdir: s for s in latent_specs(self.run)}
+
+        # scANVI first and OUTSIDE the collect-and-continue below: it is the
+        # deliverable, `.obsm['X_umap_{run}']` and `.obs['leiden_{run}']` are
+        # what `_write` and the report read, and a failure here is a failed run
+        # rather than a missing comparison.
+        result = embed_one(self.adata, specs['SCANVI'], sample=self.sample, run=self.run,
+                           out_dir=self.out_dir, cfg=cfg, batch_key=self.batch_key,
+                           do_leiden=True, log=logger)
         self.adata = result['adata']
         self.record['embedding'] = result['params']
 
-        # `_predict` (which ran before this) already wrote annotation_/
-        # confidence_/flag_/seed_support_{run}, so they're available to colour
-        # by here. UMAPPlotter is the same class mapping QC and integration
-        # already use -- plotting only, no computation of its own -- so this
-        # is the one new figure this stage adds beyond what run_diagnostics
-        # (training curves, batch mixing) already covers.
-        m = self.run
-        extra = ['seed_{}'.format(m), 'seed_support_{}'.format(m),
-                 'annotation_{}'.format(m), 'confidence_{}'.format(m),
-                 'flag_{}'.format(m)]
-        if self.batch_key and self.batch_key in self.adata.obs:
-            extra.append(self.batch_key)
-        try:
-            UMAPPlotter(self.adata, self.out_dir, logger=logger).plot(
-                umap_key=result['umap_key'], leiden_key=result['leiden_key'],
-                extra_color_by=extra, prefix=self.sample)
-        except Exception as exc:                          # noqa: BLE001
-            logger.warning('[REFINE] %s/%s: embedding plots failed: %s',
-                           self.sample, self.run, exc)
+        if cfg.get('compare_models', True):
+            record = {}
+            embed_models(self.adata, sample=self.sample, run=self.run,
+                         out_dir=self.out_dir, models=list(COMPARISON_MODELS), cfg=cfg,
+                         batch_key=self.batch_key, do_leiden=True, log=logger,
+                         record=record)
+            self.record['embedding_models'] = record
         return result
 
     def _write(self, evidence):
@@ -584,7 +1017,8 @@ class RefineRun:
 
         self.record['artifacts'] = {
             'h5ad': str(h5ad_path), 'labels_tsv': str(tsv_path),
-            'scvi_model': str(self.out_dir / 'scvi'), 'scanvi_model': str(self.out_dir / 'scanvi')}
+            'scvi_model': str(self.model_dir('SCVI')),
+            'scanvi_model': str(self.model_dir('SCANVI'))}
         run_path = self.out_dir / '{}_{}_run.json'.format(self.sample, self.run)
         run_path.write_text(json.dumps(self.record, indent=2, default=str))
         logger.info('[REFINE] %s/%s written -> %s', self.sample, self.run, self.out_dir)

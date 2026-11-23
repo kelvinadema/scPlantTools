@@ -194,9 +194,7 @@ class DimReducer:
             hvg_adata = load_cached_hvg(staged, hvg_outfn, n_hvg, self.logger)
             if hvg_adata is None:
                 selector = HVGSelector(staged, outfn=str(hvg_outfn), n_hvg=n_hvg, logger=self.logger)
-                # n_hvg must be set on the constructor, not passed to select_hvg --
-                # select_hvg's own `n_hvg` parameter is accepted but never read
-                # either (it uses `self.n_hvg` throughout). batch_key=None: this
+                # The constructor supplies the default feature count. batch_key=None: this
                 # fallback only ever runs on a single sample's own AnnData, which
                 # has no multi-sample `.obs['batch']` concept -- batch_key='batch'
                 # (the class default) would raise a KeyError.

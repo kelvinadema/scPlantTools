@@ -1,0 +1,13 @@
+samples:
+  GSE155304_sNucRNA-seq_rep4:
+    mapper: alevin
+    mapping_config: arabidopsis
+    qc_filter: default
+    sample_type: nuclei
+    tech: 10xv2
+    batch: GSE155304_sNucRNA-seq_rep4
+    qc_metrics: arabidopsis
+    fastq1:
+    - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/external/Arabidopsis/GSE155304/sNucRNA-seq_rep4/SRR12340623_1.fastq.gz
+    fastq2:
+    - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/external/Arabidopsis/GSE155304/sNucRNA-seq_rep4/SRR12340623_2.fastq.gz

@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=../../schemas/technology_config.schema.json
+# Example only: copy to configs/local and edit paths before running.
+technologies:
+  10xv3:
+    alevin:
+      chemistry: 1{b[16]u[12]x:}2{r:}
+      extra_mapping_args:
+      - --unfiltered-pl
+      - data/example/10xv3-whitelist.txt

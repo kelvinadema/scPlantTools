@@ -2,8 +2,8 @@
 #
 # THIS DOES NOT CHANGE HOW THE PIPELINE IS RUN. `python -m <package>.main` from
 # the repo root remains the only entry method, exactly as before -- see
-# CLAUDE.md's "Running it (on the cluster)". This file exists to declare the
-# package set, give pytest a rootdir, and hold linter config. It is not a
+# docs/setup-mapping.md. This file exists to declare the
+# package set, give pytest a rootdir, and hold test configuration. It is not a
 # request to `pip install` anything.
 #
 # NO RUNTIME DEPENDENCIES ARE LISTED, deliberately. Each stage has its own conda
@@ -19,7 +19,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "scrnaseq-pipeline"
 version = "0.1.0"
-description = "Single-cell RNA-seq mapping, integration and annotation pipeline (Medicago truncatula and friends)"
+description = "Configurable plant single-cell and single-nucleus RNA-seq mapping and QC with optional downstream workflows"
 requires-python = ">=3.12"
 
 # Every stage env is Python 3.12 (scMapping 3.12.13, scIntegration 3.12.11,
@@ -29,6 +29,7 @@ requires-python = ">=3.12"
 
 [tool.setuptools]
 packages = [
+    "sc",
     "shared",
     "mapping",
     "integration",

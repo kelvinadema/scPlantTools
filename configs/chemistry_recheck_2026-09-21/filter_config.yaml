@@ -1,0 +1,388 @@
+# yaml-language-server: $schema=./schemas/filter_config.schema.json
+QCfilterconfigs:
+  default:
+    filters:
+      # `mode:` replaces the old boolean `enabled:` on every block below.
+      #
+      #   filter     run it, and remove the cells it flags   (was: enabled: true)
+      #   advisory   run it, record scores/flags/figures, remove nothing
+      #   off        do not run it at all                    (was: enabled: false)
+      #
+      # 'advisory' exists so a method can produce a diagnostic without making
+      # the decision -- the interactive QC report renders advisory scores for a
+      # human to threshold or lasso by hand. One key with three values, rather
+      # than `enabled` plus a separate `mode`, so the contradictory
+      # `enabled: false` + `mode: advisory` cannot be written at all.
+      barcode_rank: &barcode_rank
+        mode: filter
+        # Hand-set cut-off. When present, candidate selection AND the dynamic
+        # clamp below are both bypassed -- the value here is used exactly as
+        # written, and `.uns` records selection_policy: 'manual'.
+        #
+        # This is the key the interactive report points at when you drag the
+        # barcode-rank line to admit MORE cells than the pipeline chose. That
+        # direction cannot be applied as a manual decision: cells the cascade
+        # removed were never seen by MAD/miQC/regression, so their flags are
+        # False by default -- never tested, not passed. Set the value here and
+        # re-run `--force-qc` (~20 s; mapping and CellBender are untouched) so
+        # every downstream filter re-fits on the population you actually want.
+        #
+        # threshold: 110
+        min_total_counts: 500
+        layer: corrected_counts
+        features:
+          - total_counts
+
+      sample_quality: &sample_quality
+        # Not a filter but a gate over the ones below, so its modes read
+        # slightly differently:
+        #
+        #   filter     act on the verdict: every filter that fits its threshold
+        #              from this sample's own distribution is DOWNGRADED TO
+        #              ADVISORY -- it still runs and still records its scores,
+        #              thresholds and figures, but removes no cells
+        #   advisory   record the verdict and show the report banner; change
+        #              nothing else, every filter acts normally
+        #   off        do not assess at all
+        #
+        # Downgraded, not skipped. A flagged sample is precisely the one someone
+        # needs to review by hand, and they cannot review a threshold whose
+        # evidence was never computed -- so the metrics are always produced and
+        # the interactive section of the HTML report has something to work with.
+        # What a flagged sample's filtered object then reflects is barcode rank
+        # plus mad's absolute max_value/min_value caps, since neither depends on
+        # this sample's distribution.
+        mode: filter
+        layer: corrected_counts
+        # Evaluated once, right after barcode rank, on the cells that survived
+        # it. If either threshold is not met the sample is flagged for manual
+        # review and every filter below that fits its threshold from this
+        # sample's own distribution is downgraded to advisory -- mad's adaptive
+        # entries (not its max_value/min_value ones), miqc, regression, gmm,
+        # iforest, dod, solo. Barcode rank and mad's absolute-bound entries are
+        # unaffected: they do not depend on this sample's distribution.
+        #
+        # This exists because a small or shallow sample can fake exactly the
+        # signal these look for -- e.g. miqc's compromised-cell signature,
+        # which low-depth cells can mimic through counting noise alone -- so
+        # trusting statistics fit from too little data is worse than not
+        # fitting them. The flag and the counts that triggered it are recorded
+        # in .uns['qc']['sample_quality'] and surfaced as a banner in the
+        # sample's HTML report; nothing here is tuned/validated, treat these
+        # as starting points and adjust once you have seen how they behave
+        # across your actual cohort.
+        min_cells: 500
+        min_median_depth: 250
+        # A SECOND, LATER check, measured at the bottom of the cascade rather
+        # than here at the top -- recorded in .uns['qc']['post_cascade'] and
+        # shown as its own banner in the HTML report.
+        #
+        # The two thresholds above ask "can a threshold fit from this sample's
+        # own distribution be trusted?", on the cells surviving barcode rank.
+        # Nothing used to ask "is there a usable population left once every
+        # filter has run?", and the gap bites: 5_s_zone_exp (660 cells past
+        # barcode rank) and N24h (2232) both cleared min_cells=500 here, then
+        # mad's absolute max_value caps -- which this gate deliberately never
+        # downgrades, because they do not depend on this sample's distribution
+        # -- cut them to 0 and 5 cells.
+        #
+        # Advisory only. Nothing is relaxed or re-run in response: a sample
+        # whose cells are 97% mitochondrial reads is a bad prep, and rejecting
+        # it is the correct answer. What was missing was saying so in one
+        # place. The stages that used to crash on the result now check their
+        # own floors and degrade instead -- qc_plot omits the UMAP, doublets
+        # skips SOLO, and both still produce the artifact and the report.
+        min_cells_post_cascade: 200
+
+      mad: &mad
+        mode: filter
+        layer: corrected_counts
+        default_n_mad: 3
+        default_direction: 'both'
+        # Per feature: direction ('lower'|'upper'|'both'), n_mad, transform,
+        # max_value/min_value.
+        #
+        # MAD needs a spread to work with. If more than half the cells share one
+        # value -- e.g. mitochondrial_fraction in a nuclei prep, where most cells
+        # have exactly zero -- the scale estimate collapses to 0 and the rule
+        # degenerates into "is this cell exactly the median", flagging everything
+        # else. The filter detects that, skips the feature, and records why (it
+        # shows up in the sample's HTML report).
+        #
+        # A feature can carry direction AND max_value/min_value together, like
+        # the three fraction features below: both checks run -- the adaptive rule
+        # (direction) and a flat absolute cap (max_value/min_value), independent
+        # of each other, each producing its own flag column, both OR'd into the
+        # final removal mask. This is not "pick one" -- it is deliberately
+        # redundant, since the adaptive cutoff moves with each sample's own spread
+        # and a flat cap is the backstop for whatever "unremarkable for this
+        # sample" still misses in absolute terms (see the mitochondrial_fraction
+        # entry: e.g. a sample whose own spread would put the adaptive cutoff at
+        # 18% still gets a hard 10% cap here regardless).
+        #
+        # The two checks run as SEPARATE cascade stages though both are configured
+        # here: the adaptive rule runs in parallel with miQC on the barcode-rank
+        # survivors, and the absolute caps run afterwards as a cleanup on whatever
+        # those left. In the HTML report the caps appear under their own "Absolute
+        # cutoff" section, not under "Median absolute deviation". `mode:` above
+        # still gates both (off disables both; advisory records both, removes
+        # nothing); the caps are the one part NOT downgraded on a
+        # sample_quality-flagged sample, since they do not depend on its spread.
+        #
+        # A feature can also carry ONLY max_value/min_value, with no
+        # `direction` key at all -- that is the degenerate-feature override:
+        # absolute bound only, adaptive rule disabled entirely for that
+        # feature (see _run_mad_filter: `direction` present is what turns the
+        # adaptive check on, not just having a max_value).
+        #
+        #   - name: some_other_fraction
+        #     max_value: 0.2        # flag cells with >20%, adaptive rule not run at all
+        features:
+          - name: total_counts
+            direction: 'lower'
+
+          - name: n_genes
+            direction: 'lower'
+
+          - name: complexity
+            direction: 'lower'
+
+          # max_value/min_value can also be a mapping keyed by sample_type
+          # instead of a plain scalar -- nuclei preps retain far less
+          # cytoplasmic/organelle RNA than protoplasts, so one fixed absolute
+          # cutoff across both prep types is either too loose (nuclei) or too
+          # tight (protoplasts). Resolved per-sample in
+          # FilterQCMetrics._resolve_sample_type_value using the sample's own
+          # `sample_type` (same key/default as preprocess.py).
+          - name: mitochondrial_fraction
+            direction: 'upper'
+            max_value:
+              nuclei: 0.02
+              protoplast: 0.05
+
+          - name: chloroplast_fraction
+            direction: 'upper'
+            max_value:
+              nuclei: 0.02
+              protoplast: 0.05
+
+          - name: ribosomal_rna_fraction
+            direction: 'upper'
+            max_value:
+              nuclei: 0.02
+              protoplast: 0.05
+
+      miqc: &miqc
+        mode: filter
+        layer: corrected_counts
+        complexity_metric: n_genes
+        # doi:10.1371/journal.pcbi.1009290. Complements the MAD block above
+        # rather than replacing it: this jointly models each fraction against
+        # library complexity (catching a compromised cell whose fraction is
+        # elevated *relative to its complexity*, not just in absolute terms),
+        # while MAD's univariate cutoff stays as the absolute-value backstop.
+        # Runs on the barcode-rank survivors, in PARALLEL with MAD's adaptive rule
+        # (not seeded by it): a cell fails the organelle check if MAD's adaptive
+        # rule OR miQC flags it, and the absolute caps then clean up whatever
+        # survives both.
+        #
+        # Same degenerate-scale trap as MAD (nuclei preps at ~0% mitochondrial
+        # fraction have no spread for a second component to fit) -- guarded the
+        # same way: skip and record the reason rather than force a fit.
+        #
+        # Both the fraction and complexity axes are fit on their raw scale --
+        # no logit, no log, unlike every other filter here. Confirmed against
+        # the miQC package's own source (mixtureModel.R:
+        # flexmix(subsets_mito_percent ~ detected, k=2)) rather than assumed --
+        # neither variable is transformed there. An earlier version of this
+        # block logit-transformed the fraction, which broke on a real run:
+        # logit disproportionately stretches the region near 0, which is
+        # exactly where most cells sit for a low-incidence feature like
+        # ribosomal_rna_fraction. A biologically meaningless difference
+        # (0.1% vs 2%) becomes a large separation in logit space, fabricating
+        # a "compromised" component out of pure count noise -- this flagged
+        # 69%+ of cells on an otherwise fine sample before it was caught.
+        # min_component_separation is in raw proportion units as a result
+        # (0.02 = 2 percentage points), not the old logit-scale value.
+        posterior_threshold: 0.75
+        min_component_separation: 0.02
+        min_cells_per_component: 20
+        features:
+          - mitochondrial_fraction
+          - chloroplast_fraction
+          - ribosomal_rna_fraction
+
+      regression: &regression
+        mode: filter
+        x: total_counts
+        y: n_genes
+        k: 3
+        layer: corrected_counts
+
+      gmm: &gmm
+        # advisory, not filter: the Mahalanobis distance is a genuinely useful
+        # continuous score to threshold by hand, but the automatic cutoff
+        # (cutoff_quantile) is a quantile of this sample's own fitted
+        # distribution and has never been validated on real data here. Scores
+        # and figures are produced; no cells are removed.
+        mode: advisory
+        features:
+          - rspliced_fraction
+          - mitochondrial_fraction
+          - chloroplast_fraction
+          - ribosomal_rna_fraction
+          - total_counts
+          - n_genes
+          - corrected_counts_fraction
+        layer: corrected_counts
+
+      iforest: &iforest
+        # advisory only, and it should stay that way. `contamination` is a
+        # quota, not a detection rate: sklearn flags exactly that proportion of
+        # cells however clean the sample is, so the flags are the number asked
+        # for rather than a finding. The score distribution is honest and worth
+        # looking at; the flags are not, and qc_plot deliberately does not
+        # colour by them.
+        mode: advisory
+        features:
+          - rspliced_fraction
+          - mitochondrial_fraction
+          - chloroplast_fraction
+          - ribosomal_rna_fraction
+          - total_counts
+          - n_genes
+          - entropy
+          - sparsity
+          - complexity
+          - corrected_counts_fraction
+        layer: corrected_counts
+        # A quota, not a detection rate: sklearn flags exactly this proportion
+        # however clean the sample is. 5% removed means 5% was asked for.
+        # 'auto' is accepted but is worse, not better -- it pins the cut at the
+        # centre of the normal-point score distribution and flags ~20% of clean
+        # data with ~2x the false positives. See _iforest_filter's docstring.
+        contamination: 0.05
+        n_estimators: 100
+        random_state: 42
+
+      dod: &dod
+        # Left as 'filter' to preserve the behaviour this was already running
+        # with (it was `enabled: True`, with max_cells raised to 50000). Note it
+        # is quadratic in cells and builds dense n x n matrices -- roughly
+        # 3 * n^2 * 8 bytes, about 5.6 GB at 15k cells -- and qc_plot recomputes
+        # them on every report build. 'advisory' keeps the DoD change/overlap
+        # scores in the report for manual thresholding without removing cells,
+        # which is the cheaper default if you are not relying on it to filter.
+        mode: advisory
+        # Distance-of-distance transform, doi:10.1371/journal.pcbi.1010764.
+        # Note this repurposes a *visualisation* method: the paper presents DoD as
+        # a distance transform to feed t-SNE/UMAP, and treats noise detection as a
+        # secondary observation. Only method 'overlap' follows the paper.
+        #
+        # method: 'overlap'  -> flag cells retaining < overlap_threshold of their
+        #                       neighbourhood after the transform (the paper's cue)
+        #         'quantile' -> high change AND low overlap, by quantile (heuristic)
+        #         'iforest'  -> isolation forest on (change, overlap); contamination
+        #                       is a quota, see the iforest block above
+        #
+        # k must stay below the smallest cluster size; the paper demonstrates 5-10
+        # and notes the transform fails as k approaches the cell count.
+        method: overlap
+        k: 15
+        overlap_threshold: 0.25
+        contamination: 0.05
+        # Dense n x n distance matrices -> memory is 3 * n^2 * 8 bytes (two
+        # matrices plus one intermediate): 50000 cells ~= 60 GB. Raise deliberately,
+        # matched to the node's available RAM -- this is not a soft/adjustable-later
+        # default, exceeding it is a hard failure before the allocation is attempted.
+        max_cells: 50000
+        features:
+          - rspliced_fraction
+          - mitochondrial_fraction
+          - chloroplast_fraction
+          - ribosomal_rna_fraction
+          - total_counts
+          - n_genes
+          - entropy
+          - sparsity
+          - complexity
+          - corrected_counts_fraction
+        layer: corrected_counts
+
+      solo: &solo
+        # Per-sample doublet detection (scvi-tools' SOLO), run inside the
+        # mapping stage rather than integration. Doublets are a within-sample
+        # artifact of droplet loading, so calling them from a model trained
+        # jointly across many samples would make one sample's calls depend on
+        # which other samples happened to be in that run.
+        #
+        # advisory by default: a doublet call is exactly the kind of automated
+        # judgement worth overruling by hand, and the score histogram plus the
+        # scVI UMAP in the report exist to do that on. Set to 'filter' to have
+        # SOLO's hard calls removed automatically.
+        #
+        # Runs as a subprocess under its own conda env (scvi-tools cannot be
+        # installed alongside the mapping stage, which is on pandas 3.x) -- see
+        # the `doublets:` block in pipeline_config.yaml for the env, device and
+        # model settings. A sample_quality-flagged sample does not skip this --
+        # it downgrades to advisory, so the calls are still computed and still
+        # reviewable in the interactive report, just not acted on. Only a sample
+        # with zero surviving cells is skipped outright.
+        mode: advisory
+        # SOLO's raw default is a fixed 0.5 cut on its soft doublet score, but
+        # that systematically OVER-calls: SOLO's classifier is trained on a 2:1
+        # simulated-doublet:singlet set (scvi-tools' doublet_ratio=2), so its
+        # softmax posterior is calibrated to a two-thirds-doublet prior and 0.5
+        # sits inside the real singlet mass. With auto_threshold on (the default),
+        # the cut is placed at the valley between the singlet and doublet modes of
+        # THIS sample's own score distribution (a guarded 2-component Gaussian
+        # mixture on the doublet probabilities) instead. doublet_threshold is the
+        # fallback, used when auto_threshold is off OR the distribution is not
+        # clearly bimodal (a near-doublet-free sample has only one mode).
+        auto_threshold: true
+        doublet_threshold: 0.5
+        # Guards on the 2-component fit auto_threshold uses, in doublet-probability
+        # units (0..1). The two modes must be separated by at least
+        # min_component_separation and each carry at least min_component_weight of
+        # the cells, else the fit is not trusted and the cut falls back to
+        # doublet_threshold. Starting points, not tuned on this data.
+        min_component_separation: 0.25
+        min_component_weight: 0.05
+
+      scrublet: &scrublet
+        # Second, independent per-sample doublet caller (scanpy's Scrublet). It
+        # runs IN-PROCESS in the mapping env -- pure CPU, no torch, no GPU, no
+        # subprocess -- unlike SOLO, so it also covers samples SOLO skips. It
+        # simulates doublets from the QC-passed cells' raw counts (all genes) and
+        # scores each cell by proximity to the simulated set. Model-side knobs
+        # (expected rate, layer, floors) live under doublets.scrublet in
+        # pipeline_config.yaml; this block holds only mode + the hard-call cut.
+        #
+        # advisory by default, like solo: a doublet call is worth overruling by
+        # hand. Set to 'filter' to have Scrublet's hard calls removed on their
+        # own (independent of SOLO); leave advisory and set doublet_consensus to
+        # 'filter' instead to remove only cells both methods agree on.
+        mode: advisory
+        # The hard call uses the same valley detector as SOLO (auto_threshold),
+        # so both methods speak one threshold language in the report. When the
+        # score distribution is not clearly bimodal the cut falls back to
+        # doublet_threshold. Left unset, the fallback is a conservative 0.25 --
+        # under-call rather than fabricate doublets. Scrublet scores are more
+        # compressed than SOLO's, so the separation guard is smaller here.
+        auto_threshold: true
+        # doublet_threshold:            # fallback cut; unset -> 0.25
+        min_component_separation: 0.10
+        min_component_weight: 0.05
+
+      doublet_consensus: &doublet_consensus
+        # The INTERSECTION of the SOLO and Scrublet hard calls: a cell is a
+        # consensus doublet only when BOTH methods flag it. Recorded only when
+        # both methods actually produced calls -- a sample where SOLO skips gets
+        # Scrublet-only and no consensus entry.
+        #
+        # advisory by default: you decide whether to remove doublets and, if so,
+        # by which method. Set THIS to 'filter' for the conservative intersection
+        # (keeps SOLO's over-calling from driving removal on its own); set solo or
+        # scrublet to 'filter' instead for a single method, or both for the union.
+        mode: advisory
+      doublet_consensus: *doublet_consensus

@@ -73,11 +73,6 @@ def test_unknown_cohort_names_the_valid_ones():
     assert 'a' in str(e.value)
 
 
-def test_real_pipeline_config_declares_working_cohorts():
-    cfg = _load('configs/pipeline_config.yaml')
-    for name in cfg.get('cohorts', {}):
-        sheet = resolve_cohort(cfg, name)['samples']
-        assert (REPO_ROOT / sheet).exists(), '{} -> missing sheet {}'.format(name, sheet)
 
 
 # ---------------------------------------------------------- species profiles

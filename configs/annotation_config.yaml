@@ -57,6 +57,9 @@ AnnotateConfigs:
           # single-sample ones are still useful diagnostics -- but MtSZ_labels is
           # the one CH3's metrics depend on.
           - MtSZ_labels
+          - MtSZ_sysvi_labels
+          - MtSZ_s_SV_E_l10_c50              # C11 T5 search pick 2026-09-11 (D-C25, absolute silhouette floor)
+          - MtSZ_ls_E              # C11 winner 2026-09-10 (6.5 % concordant-shared)
           - MtSZ
           - MtTip
           - nMock
@@ -76,6 +79,9 @@ AnnotateConfigs:
         # so annotating them separately produces label spaces that cannot be
         # compared, which is the entire reason this target exists.
         MtSZ_labels: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/MtSZ_labels/MtSZ_labels.h5ad
+        MtSZ_sysvi_labels: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/SysVI/MtSZ_sysvi_labels/MtSZ_sysvi_labels.h5ad
+        MtSZ_s_SV_E_l10_c50: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/SysVI/MtSZ_s_SV_E_l10_c50/MtSZ_s_SV_E_l10_c50.h5ad
+        MtSZ_ls_E: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/MtSZ_ls_E/MtSZ_ls_E.h5ad
         MtSZ: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/MtSZ/MtSZ.h5ad
         MtTip: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/MtTip/MtTip.h5ad
         nMock: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/nMock/nMock.h5ad
@@ -107,6 +113,8 @@ AnnotateConfigs:
           # are the 2026-07-28 run and are retained for provenance; CH3's
           # cross-sample metrics read labels from At_tip_labels only.
           - At_tip_labels
+          - At_tip_sysvi_labels
+          - At_tip_ls_H              # C11 winner 2026-09-10 (52.4 % concordant-shared)
           - GSE123013_WT_rep1
           - GSE123013_WT_rep2
           - GSE123013_WT_rep3
@@ -134,6 +142,8 @@ AnnotateConfigs:
         # in this cohort), but the confound is a property of the design. It is
         # the chapter's worst one and remains a limitation to state.
         At_tip_labels: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/At_tip_labels/At_tip_labels.h5ad
+        At_tip_sysvi_labels: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/SysVI/At_tip_sysvi_labels/At_tip_sysvi_labels.h5ad
+        At_tip_ls_H: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/SysVI/At_tip_ls_H/At_tip_ls_H.h5ad
         GSE123013_WT_rep1: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/GSE123013_WT_rep1/GSE123013_WT_rep1.h5ad
         GSE123013_WT_rep2: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/GSE123013_WT_rep2/GSE123013_WT_rep2.h5ad
         GSE123013_WT_rep3: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/GSE123013_WT_rep3/GSE123013_WT_rep3.h5ad
@@ -177,6 +187,9 @@ AnnotateConfigs:
           # are the 2026-07-28 run and are retained for provenance; CH3's
           # cross-sample metrics read labels from Zm_tip_labels only.
           - Zm_tip_labels
+          - Zm_tip_sysvi_labels
+          - Zm_prot_ls_A              # C11 per-modality fallback 2026-09-10 (no shared arm above 25 %)
+          - Zm_nuc_ls_A              # C11 per-modality fallback 2026-09-10 (no shared arm above 25 %)
           - CNP0007662_sc_root_fresh_nuclei_b1_cDNA
           - CNP0007662_sc_root_fresh_nuclei_b2_cDNA
           - CNP0007662_sc_root_protoplasts_b1_cDNA
@@ -192,6 +205,9 @@ AnnotateConfigs:
         # CH3's cross-sample metrics -- those were run 2026-07-28, before this
         # target existed, and their leiden ids are not comparable.
         Zm_tip_labels: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/Zm_tip_labels/Zm_tip_labels.h5ad
+        Zm_tip_sysvi_labels: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/SysVI/Zm_tip_sysvi_labels/Zm_tip_sysvi_labels.h5ad
+        Zm_prot_ls_A: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/Zm_prot_ls_A/Zm_prot_ls_A.h5ad
+        Zm_nuc_ls_A: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/Zm_nuc_ls_A/Zm_nuc_ls_A.h5ad
         CNP0007662_sc_root_fresh_nuclei_b1_cDNA: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/CNP0007662_sc_root_fresh_nuclei_b1_cDNA/CNP0007662_sc_root_fresh_nuclei_b1_cDNA.h5ad
         CNP0007662_sc_root_fresh_nuclei_b2_cDNA: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/CNP0007662_sc_root_fresh_nuclei_b2_cDNA/CNP0007662_sc_root_fresh_nuclei_b2_cDNA.h5ad
         CNP0007662_sc_root_protoplasts_b1_cDNA: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/integration/JointEmbeddingSCVI/CNP0007662_sc_root_protoplasts_b1_cDNA/CNP0007662_sc_root_protoplasts_b1_cDNA.h5ad

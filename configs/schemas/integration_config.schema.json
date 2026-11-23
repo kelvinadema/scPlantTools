@@ -79,11 +79,28 @@
           "covariates": {
             "type": [
               "array",
-              "string"
+              "string",
+              "object"
             ],
-            "description": ".obs columns passed to scVI as continuous covariates. A name that is not present in .obs is silently dropped at integrate.py:79 and the model trains without it -- validate.py checks these.",
+            "description": ".obs columns passed to scVI as covariates. A bare LIST means all-continuous, which is what almost every target wants and why it is the common form. The OBJECT form -- {categorical: [...], continuous: [...]} -- has been supported by targets.py::parse_covariates all along but was rejected by this schema until 2026-08-17, so a target needing a categorical covariate could not be written. SysVI targets need it: their batch_key is the SYSTEM (sample_type) and the per-sample batch goes here as categorical instead. A name that is not present in .obs is silently dropped at integrate.py:79 and the model trains without it -- validate.py checks these.",
             "items": {
               "type": "string"
+            },
+            "properties": {
+              "categorical": {
+                "type": "array",
+                "description": ".obs columns registered as CATEGORICAL covariates.",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "continuous": {
+                "type": "array",
+                "description": ".obs columns registered as CONTINUOUS covariates.",
+                "items": {
+                  "type": "string"
+                }
+              }
             }
           },
           "batch_key": {
@@ -116,6 +133,28 @@
             "type": "integer",
             "description": "Drop genes detected in fewer than this many cells, applied ONCE to the concatenated target (orchestrator._concatenate_adata) and so to every method. Unset means no gene filtering -- the historical behaviour, and the default precisely because this runs for every target: a value here would change the input to every existing fit. Counted on the layer the model trains on (keep_layers[0], normally corrected_counts), not on .X, since those differ after ad.concat. Exists for the do_hvg: False case, where nothing else filters genes at all -- the min_cells=10 in hvg.py's initialize_views lives INSIDE HVGSelector and is skipped along with the selection. On a 265k-cell cohort a floor of 10 is 0.004% of cells: it removes genes carrying no information rather than genes carrying rare-population signal, which is what makes it a safe substitute for a variance ranking."
           },
+          "derive_corrected_layers": {
+            "type": "boolean",
+            "description": "Derive ambient-corrected spliced/unspliced layers per sample before concatenation: corrected_rspliced = floor(corrected_counts * rspliced / (rspliced + runspliced)) and corrected_runspliced = corrected_counts - corrected_rspliced, per gene per cell, so the two sum exactly to corrected_counts. rspliced + runspliced == 0 with corrected_counts > 0 is an error (CellBender removes counts, never adds). Reads rspliced/runspliced off the mapping artifact BEFORE keep_layers drops anything, and the two derived layers are kept automatically. Second-order exact: CellBender removed 1-7% of counts per cell here, so the misallocation is bounded by that fraction. Default False."
+          },
+          "layer": {
+            "type": [
+              "string",
+              "array"
+            ],
+            "description": "Count layer the scVI-path model trains on. Unstated means corrected_counts, as it always was. A LIST OF TWO layers trains on a 2 x genes feature matrix -- every gene contributes one feature per layer, named <gene>__s and <gene>__u -- so the model sees spliced and unspliced counts as separate inputs rather than their sum, and HVG selection runs on that feature space. The fitted latent is written back onto the ordinary gene-space object, with .var[hvg_spliced] / .var[hvg_unspliced] marking which features trained and the derivation in .uns[labelspace]. SysVI derives its log-normalised input from whatever matrix it is given, so it works on the doubled matrix unchanged.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "hvg_batch_key": {
+            "type": "string",
+            "description": "The .obs column HVG rankings are aggregated over when do_hvg is on (shared/hvg.py::select_hvg(batch_key=...)). Unstated means batch, as it always was. Distinct from batch_key on purpose: the model may correct per library while the gene set is balanced per modality (sample_type), so the larger libraries do not dominate which genes are chosen."
+          },
+          "exclude_genes": {
+            "type": "string",
+            "description": "Path to a gene-list file (one id per line, # comments) removed from the training object after concatenation and before HVG selection; with a two-layer `layer` both features of a listed gene go. The SAVED h5ad keeps every gene, with .var[excluded] marking the list, so marker calling and annotation scoring still see them. ${VAR} is expanded from the environment. Used for organelle and ribosomal-protein genes, which otherwise rank as modality-discriminating HVGs."
+          },
           "do_hvg": {
             "type": "boolean",
             "description": "Run the 8-method HVG consensus before training. Default False. Note the gene floor that runs with it is HVGSelector-internal, so turning this off removes it too -- see min_cells."
@@ -134,7 +173,8 @@
             "enum": [
               "SCVI",
               "JointEmbeddingSCVI",
-              "DRVI"
+              "DRVI",
+              "SysVI"
             ]
           },
           "n_trials": {
@@ -143,7 +183,7 @@
           },
           "search_space": {
             "type": "object",
-            "description": "Override the autotune search space, merged PER KEY over this model_class's built-in default (integrate.py's _SEARCH_SPACE_DEFAULTS, one per SCVI/JointEmbeddingSCVI/DRVI). State only what differs. Values: a LIST becomes tune.choice over it, so a 1-element list pins a parameter; a single-key mapping like {loguniform: [1.0e-4, 1.0e-2]} becomes that ray sampler; null drops the key entirely, leaving scvi's own constructor default and not naming it at all. Only read when tune is on -- with tune off the parameters come from model_params. Keys are not checked against the model constructor, so a name the model does not accept fails at the first trial, not here."
+            "description": "Override the autotune search space, merged PER KEY over this model_class's built-in default (integrate.py's _SEARCH_SPACE_DEFAULTS, one per SCVI/JointEmbeddingSCVI/DRVI/SysVI). State only what differs. Values: a LIST becomes tune.choice over it, so a 1-element list pins a parameter; a single-key mapping like {loguniform: [1.0e-4, 1.0e-2]} becomes that ray sampler; null drops the key entirely, leaving scvi's own constructor default and not naming it at all. Only read when tune is on -- with tune off the parameters come from model_params. Keys are not checked against the model constructor, so a name the model does not accept fails at the first trial, not here."
           },
           "tune_metric": {
             "type": "string",
@@ -255,11 +295,28 @@
         "covariates": {
           "type": [
             "array",
-            "string"
+            "string",
+            "object"
           ],
-          "description": ".obs columns passed to scVI as continuous covariates. A name that is not present in .obs is silently dropped at integrate.py:79 and the model trains without it -- validate.py checks these.",
+          "description": ".obs columns passed to scVI as covariates. A bare LIST means all-continuous, which is what almost every target wants and why it is the common form. The OBJECT form -- {categorical: [...], continuous: [...]} -- has been supported by targets.py::parse_covariates all along but was rejected by this schema until 2026-08-17, so a target needing a categorical covariate could not be written. SysVI targets need it: their batch_key is the SYSTEM (sample_type) and the per-sample batch goes here as categorical instead. A name that is not present in .obs is silently dropped at integrate.py:79 and the model trains without it -- validate.py checks these.",
           "items": {
             "type": "string"
+          },
+          "properties": {
+            "categorical": {
+              "type": "array",
+              "description": ".obs columns registered as CATEGORICAL covariates.",
+              "items": {
+                "type": "string"
+              }
+            },
+            "continuous": {
+              "type": "array",
+              "description": ".obs columns registered as CONTINUOUS covariates.",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         },
         "batch_key": {
@@ -292,6 +349,28 @@
           "type": "integer",
           "description": "Drop genes detected in fewer than this many cells, applied ONCE to the concatenated target (orchestrator._concatenate_adata) and so to every method. Unset means no gene filtering -- the historical behaviour, and the default precisely because this runs for every target: a value here would change the input to every existing fit. Counted on the layer the model trains on (keep_layers[0], normally corrected_counts), not on .X, since those differ after ad.concat. Exists for the do_hvg: False case, where nothing else filters genes at all -- the min_cells=10 in hvg.py's initialize_views lives INSIDE HVGSelector and is skipped along with the selection. On a 265k-cell cohort a floor of 10 is 0.004% of cells: it removes genes carrying no information rather than genes carrying rare-population signal, which is what makes it a safe substitute for a variance ranking."
         },
+        "derive_corrected_layers": {
+          "type": "boolean",
+          "description": "Derive ambient-corrected spliced/unspliced layers per sample before concatenation: corrected_rspliced = floor(corrected_counts * rspliced / (rspliced + runspliced)) and corrected_runspliced = corrected_counts - corrected_rspliced, per gene per cell, so the two sum exactly to corrected_counts. rspliced + runspliced == 0 with corrected_counts > 0 is an error (CellBender removes counts, never adds). Reads rspliced/runspliced off the mapping artifact BEFORE keep_layers drops anything, and the two derived layers are kept automatically. Second-order exact: CellBender removed 1-7% of counts per cell here, so the misallocation is bounded by that fraction. Default False."
+        },
+        "layer": {
+          "type": [
+            "string",
+            "array"
+          ],
+          "description": "Count layer the scVI-path model trains on. Unstated means corrected_counts, as it always was. A LIST OF TWO layers trains on a 2 x genes feature matrix -- every gene contributes one feature per layer, named <gene>__s and <gene>__u -- so the model sees spliced and unspliced counts as separate inputs rather than their sum, and HVG selection runs on that feature space. The fitted latent is written back onto the ordinary gene-space object, with .var[hvg_spliced] / .var[hvg_unspliced] marking which features trained and the derivation in .uns[labelspace]. SysVI derives its log-normalised input from whatever matrix it is given, so it works on the doubled matrix unchanged.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hvg_batch_key": {
+          "type": "string",
+          "description": "The .obs column HVG rankings are aggregated over when do_hvg is on (shared/hvg.py::select_hvg(batch_key=...)). Unstated means batch, as it always was. Distinct from batch_key on purpose: the model may correct per library while the gene set is balanced per modality (sample_type), so the larger libraries do not dominate which genes are chosen."
+        },
+        "exclude_genes": {
+          "type": "string",
+          "description": "Path to a gene-list file (one id per line, # comments) removed from the training object after concatenation and before HVG selection; with a two-layer `layer` both features of a listed gene go. The SAVED h5ad keeps every gene, with .var[excluded] marking the list, so marker calling and annotation scoring still see them. ${VAR} is expanded from the environment. Used for organelle and ribosomal-protein genes, which otherwise rank as modality-discriminating HVGs."
+        },
         "do_hvg": {
           "type": "boolean",
           "description": "Run the 8-method HVG consensus before training. Default False. Note the gene floor that runs with it is HVGSelector-internal, so turning this off removes it too -- see min_cells."
@@ -310,7 +389,8 @@
           "enum": [
             "SCVI",
             "JointEmbeddingSCVI",
-            "DRVI"
+            "DRVI",
+            "SysVI"
           ]
         },
         "n_trials": {
@@ -319,7 +399,7 @@
         },
         "search_space": {
           "type": "object",
-          "description": "Override the autotune search space, merged PER KEY over this model_class's built-in default (integrate.py's _SEARCH_SPACE_DEFAULTS, one per SCVI/JointEmbeddingSCVI/DRVI). State only what differs. Values: a LIST becomes tune.choice over it, so a 1-element list pins a parameter; a single-key mapping like {loguniform: [1.0e-4, 1.0e-2]} becomes that ray sampler; null drops the key entirely, leaving scvi's own constructor default and not naming it at all. Only read when tune is on -- with tune off the parameters come from model_params. Keys are not checked against the model constructor, so a name the model does not accept fails at the first trial, not here."
+          "description": "Override the autotune search space, merged PER KEY over this model_class's built-in default (integrate.py's _SEARCH_SPACE_DEFAULTS, one per SCVI/JointEmbeddingSCVI/DRVI/SysVI). State only what differs. Values: a LIST becomes tune.choice over it, so a 1-element list pins a parameter; a single-key mapping like {loguniform: [1.0e-4, 1.0e-2]} becomes that ray sampler; null drops the key entirely, leaving scvi's own constructor default and not naming it at all. Only read when tune is on -- with tune off the parameters come from model_params. Keys are not checked against the model constructor, so a name the model does not accept fails at the first trial, not here."
         },
         "tune_metric": {
           "type": "string",

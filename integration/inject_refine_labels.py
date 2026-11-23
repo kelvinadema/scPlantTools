@@ -31,11 +31,19 @@ Two label columns are emitted, and the difference matters for scANVI:
     ``SCANVI.from_scvi_model(..., unlabeled_category='not_annotated')`` is not
     taught to reproduce refine's own hedges as if they were a cell type.
 
+**Sources are selected, not unioned.** ``--source`` defaults to the original
+pair (``MtTip`` + ``MtSZ``) because those two refine runs cover disjoint cells.
+``MtPartA_TipSZmock_DRVI`` overlaps BOTH of them -- it shares the tip libraries
+with ``MtTip`` and ``pMock`` with ``MtSZ`` -- so unioning it in trips the
+uniqueness guard in ``load_labels``. Name it explicitly instead.
+
 Usage (from the repo root)::
 
     python integration/inject_refine_labels.py --dry-run
     python integration/inject_refine_labels.py --commit
     python integration/inject_refine_labels.py --commit --target MtInduced_10x
+    python integration/inject_refine_labels.py --commit \\
+        --target MtInduced_TipSZmock --source MtPartA_TipSZmock_DRVI
 """
 
 from __future__ import annotations
@@ -58,12 +66,23 @@ NOT_ANNOTATED = 'not_annotated'
 SOURCES = {
     'MtTip': ROOT / 'results/refine/MtTip/combined/MtTip_combined_labels.tsv',
     'MtSZ': ROOT / 'results/refine/MtSZ/combined/MtSZ_combined_labels.tsv',
+    # Chapter 5 Part B's reference, 2026-08-12. 144,502 cells: the nine tip
+    # libraries plus pMock/BDMock/SMu008. It OVERLAPS both entries above, so it
+    # is never unioned with them -- see --source in the module docstring.
+    'MtPartA_TipSZmock_DRVI': ROOT / ('results/refine/MtPartA_TipSZmock_DRVI/combined/'
+                                      'MtPartA_TipSZmock_DRVI_combined_labels.tsv'),
 }
+
+#: What `--source` uses when not given. The original pair, whose cells are
+#: disjoint; adding a third here would break every existing invocation.
+DEFAULT_SOURCES = ('MtTip', 'MtSZ')
 
 TARGETS = {
     'MtInduced': ROOT / 'results/integration/scArches/MtInduced/MtInduced.h5ad',
     'MtInduced_10x': ROOT / 'results/integration/scArches/MtInduced_10x/MtInduced_10x.h5ad',
     'MtInduced_bd': ROOT / 'results/integration/scArches/MtInduced_bd/MtInduced_bd.h5ad',
+    'MtInduced_TipSZmock': ROOT / ('results/integration/scArches/MtInduced_TipSZmock/'
+                                   'MtInduced_TipSZmock.h5ad'),
 }
 
 # (source column, output column, kind). 'cat' -> categorical, 'num' -> float64.
@@ -116,15 +135,57 @@ def target_keys(path: Path) -> pd.Index:
         if 'sample' not in obs:
             return pd.Index(index)
         samples = _read_obs_col(obs, 'sample').astype(str)
+        index = _strip_double_prefix(index, samples)
         if np.char.startswith(index, np.char.add(samples, '.')).all():
             return pd.Index(index)  # already composite
         return pd.Index(np.char.add(np.char.add(samples, '.'), index))
 
 
-def load_labels() -> pd.DataFrame:
-    """Concatenate the refine label tables, tagging each row with its source."""
+def _strip_double_prefix(index: np.ndarray, samples: np.ndarray) -> np.ndarray:
+    """Undo the extra ``<ref0>.`` the scArches concat puts on reference cells.
+
+    Building a scArches target prefixes the whole REFERENCE block with the
+    FIRST reference library's name, so those cells arrive as
+    ``<ref0>.<sample>.<barcode>`` -- ``pMock.pNOD.AGCC...`` on MtInduced,
+    ``p1.p1.CATCGT...`` on MtInduced_TipSZmock -- while every query cell is the
+    normal ``<sample>.<barcode>``.
+
+    That block is **exactly the labelled one**, so without this the join
+    silently matches zero refine rows and the run looks like a label transfer
+    that covered nothing. The bare composite check above cannot catch it:
+    ``p1.p1.CATCGT`` does start with ``p1.``, so it passes as "already
+    composite" and is returned unrepaired.
+
+    The rule drops the first field only when the SECOND field is the cell's own
+    ``sample``, which is the signature of the doubling and leaves a barcode
+    that merely contains dots alone. It is a no-op once the concat is fixed
+    upstream, so it is safe to leave in place.
+    """
+    def _fix(barcode: str, sample: str) -> str:
+        parts = barcode.split('.')
+        if len(parts) >= 3 and parts[1] == sample:
+            return barcode.split('.', 1)[1]
+        return barcode
+
+    out = np.array([_fix(bc, s) for bc, s in zip(index, samples)], dtype=object)
+    n = int((out != index).sum())
+    if n:
+        print(f"  repaired {n} double-prefixed reference barcode(s)")
+    return out.astype(str)
+
+
+def load_labels(sources=None) -> pd.DataFrame:
+    """Concatenate the selected refine label tables, tagging each row's source.
+
+    `sources` is a list of `SOURCES` keys, defaulting to `DEFAULT_SOURCES`.
+    Selecting rather than unioning everything is deliberate: refine runs may
+    cover overlapping cells, and the uniqueness guard below is a stop sign, not
+    something to work around by deduplicating -- two runs disagreeing about a
+    cell is a question for a human, not a merge rule.
+    """
     frames = []
-    for name, path in SOURCES.items():
+    for name in (sources or DEFAULT_SOURCES):
+        path = SOURCES[name]
         if not path.exists():
             sys.exit(f"missing refine labels: {path}")
         df = pd.read_csv(path, sep='\t', index_col=0)
@@ -247,11 +308,15 @@ def main() -> None:
                       help='add the columns to the h5ad files in place')
     ap.add_argument('--target', action='append', choices=sorted(TARGETS),
                     help='restrict to one target (repeatable); default all')
+    ap.add_argument('--source', action='append', choices=sorted(SOURCES),
+                    help='refine run to read labels from (repeatable); default '
+                         f'{" + ".join(DEFAULT_SOURCES)}. Sources that overlap '
+                         'cannot be combined -- see the module docstring.')
     ap.add_argument('--tsv-dir', type=Path, default=None,
                     help='where --dry-run writes its TSVs (default: alongside each h5ad)')
     args = ap.parse_args()
 
-    labels = load_labels()
+    labels = load_labels(args.source)
     print(f"refine labels: {len(labels)} cells "
           f"({labels['refine_source'].value_counts().to_dict()})\n")
 

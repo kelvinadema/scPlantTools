@@ -24,14 +24,30 @@ Thumbs.db
 .ipynb_checkpoints/
 *.nbconvert.ipynb
 
-# === Local-only working notes and HPC glue ===
-# Kept out of the public repo: docs/ and CLAUDE.md are internal working notes,
-# README.md is the local HPC-specific readme, and batch_scripts/ is SLURM glue
-# tied to this cluster's partitions, module names and absolute paths.
-/docs/
+# === Local working notes and study-specific jobs ===
 /CLAUDE.md
-/README.md
-/batch_scripts/
+/docs/*
+!/docs/README.md
+!/docs/setup-mapping.md
+!/docs/setup-integration.md
+!/docs/setup-annotation.md
+!/docs/configuration.md
+!/docs/outputs.md
+!/docs/testing.md
+!/docs/releasing.md
+!/docs/third-party.md
+!/docs/markerid-porting.md
+!/docs/decisions/
+/batch_scripts/*
+!/batch_scripts/README.md
+!/batch_scripts/lib/
+!/batch_scripts/run_mapper.sh
+!/batch_scripts/run_refilter.sh
+!/batch_scripts/run_integration.sh
+!/batch_scripts/run_annotation.sh
+/configs/local/
+# Interrupted fetches are local work, never sample-sheet examples.
+*.partial
 
 # === One-off maintenance artifacts ===
 # Snapshot and cleanup bookkeeping from the 2026-07/08 tree reorganisation.

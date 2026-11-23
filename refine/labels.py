@@ -106,7 +106,7 @@ def summarise(labels: pd.Series) -> pd.DataFrame:
 # --------------------------------------------------------------------- groups
 
 def _group_assignment(scores: pd.DataFrame, membership: dict, quantile, margin,
-                      min_z=0.0):
+                      min_z=0.0, quantile_scope='group', min_cells_per_geneset=10):
     """
     One method's verdict: which group each cell is a confident seed for.
 
@@ -118,6 +118,29 @@ def _group_assignment(scores: pd.DataFrame, membership: dict, quantile, margin,
         assignment   = argmax over GROUPS, and only if it beats the runner-up
                        group by `margin`
         seeds        = top `quantile` of the assigned cells, per group
+                       (`quantile_scope='group'`), or per WINNING MEMBER
+                       GENESET within the group (`quantile_scope='geneset'`)
+
+    **Why the scope option exists (chapter 3, C2 addendum 2026-09-13).** A
+    group that unites two clusters -- the reviewer saying "these are one cell
+    type" -- unites two genesets whose z-scores live on different scales, and
+    a single decile over the pooled assigned cells hands every seed to the
+    higher-scoring cluster. On `At_tip_ls_H` the pericycle group held a nuclei
+    cluster (median group z 3.3) and a protoplast cluster (3.1); the pooled
+    cutoff was 3.9 and 1 of 185 seeds was a protoplast, so the class stayed
+    nuclei-only by construction and the novelty safeguard then demoted the
+    protoplasts scANVI predicted into it. `geneset` scope takes the decile
+    among the cells each member geneset wins, which is what `seed_cells` does
+    per geneset before grouping -- exclusivity is unchanged (a cell must still
+    win its group by `margin`), only the cutoff is local. A geneset that wins
+    fewer than `min_cells_per_geneset` assigned cells keeps the group cutoff:
+    a decile of five cells is not a core.
+
+    Caveat of the local cutoff: a member geneset that describes no real
+    population still wins the scattered cells on which its noise happens to be
+    highest, and under `geneset` scope those cells get a decile of their own.
+    `min_cells_per_geneset` is the only guard, so under this scope a reviewer
+    should DROP a junk geneset rather than park it in a group.
 
     **Exclusivity has to stay, and it has to be at the group level.** Dropping
     it entirely was measured and is unusable: scoring each geneset's own top
@@ -156,6 +179,8 @@ def _group_assignment(scores: pd.DataFrame, membership: dict, quantile, margin,
         second = matrix[rows, order[:, 1]]
         clear = (top - second >= margin) & (top >= min_z)
 
+    if quantile_scope not in ('group', 'geneset'):
+        raise ValueError("quantile_scope must be 'group' or 'geneset', got {!r}".format(quantile_scope))
     out = {}
     for i, group in enumerate(groups):
         assigned = clear & (top_idx == i)
@@ -166,12 +191,27 @@ def _group_assignment(scores: pd.DataFrame, membership: dict, quantile, margin,
         # as `seed_cells` does per geneset: an absolute cut would hand every
         # seed to whichever group happens to score highest overall.
         cutoff = np.quantile(matrix[assigned, i], quantile)
-        out[group] = assigned & (matrix[:, i] >= cutoff)
+        seeds = assigned & (matrix[:, i] >= cutoff)
+        if quantile_scope == 'geneset':
+            members = [s for s in membership[group] if s in scores.columns]
+            if len(members) > 1:
+                sub = z[members].to_numpy()
+                winner = sub.argmax(axis=1)
+                seeds = np.zeros(len(matrix), dtype=bool)
+                for j in range(len(members)):
+                    won = assigned & (winner == j)
+                    if not won.any():
+                        continue
+                    local = (np.quantile(matrix[won, i], quantile)
+                             if won.sum() >= min_cells_per_geneset else cutoff)
+                    seeds |= won & (matrix[:, i] >= local)
+        out[group] = seeds
     return out
 
 
 def build_group_seed_labels(scores_by_method: dict, document, quantile=0.9, margin=0.25,
-                            min_seed_cells=10, name_map=None, index=None):
+                            min_seed_cells=10, name_map=None, index=None,
+                            quantile_scope='group'):
     """
     Seed labels for the combined run, from a cross-method grouping.
 
@@ -184,6 +224,9 @@ def build_group_seed_labels(scores_by_method: dict, document, quantile=0.9, marg
     handing scANVI a coin-flip as a confident seed is worse than handing it the
     cell as a question -- the model propagates from seeds, so a wrong seed
     spreads.
+
+    `quantile_scope` ('group', the original rule, or 'geneset') is passed to
+    `_group_assignment`; see there for why it exists.
 
     Returns `(labels, support)` where `support` is how many methods backed each
     cell's final label. That number is the whole point of combining: a cell
@@ -211,7 +254,8 @@ def build_group_seed_labels(scores_by_method: dict, document, quantile=0.9, marg
         if not membership:
             continue
         scores = scores.reindex(index)
-        masks = _group_assignment(scores, membership, quantile=quantile, margin=margin)
+        masks = _group_assignment(scores, membership, quantile=quantile, margin=margin,
+                                  quantile_scope=quantile_scope)
         for gid, mask in masks.items():
             votes.loc[mask, gid] += 1
         logger.info('[REFINE] %s seeded %d cell(s) across %d group(s)',

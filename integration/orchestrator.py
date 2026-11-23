@@ -76,6 +76,114 @@ def _drop_unused_layers(adata, sample: str, keep, logger) -> None:
             f"[Integrate] Dropped unused layer '{key}' from '{sample}' before concatenation.")
 
 
+# The per-sample derivation `derive_corrected_layers:` performs. The split
+# sources are pre-CellBender; the corrected source is post-CellBender on their
+# sum. See docs/decisions/two-layer-label-spaces.md.
+CORRECTED_SOURCE = 'corrected_counts'
+SPLIT_SOURCES = ('rspliced', 'runspliced')
+CORRECTED_SPLIT_LAYERS = ('corrected_rspliced', 'corrected_runspliced')
+_DERIVE_CHUNK_ROWS = 2000
+
+
+def derive_corrected_layers(adata, sample: str = '', logger=None,
+                            chunk_rows: int = _DERIVE_CHUNK_ROWS) -> dict:
+    """Split `corrected_counts` into ambient-corrected spliced and unspliced layers, in place.
+
+    Per gene per cell, with rs/ru the pipeline's resolved spliced/unspliced counts:
+
+        corrected_rspliced   = floor(corrected_counts * rs / (rs + ru))
+        corrected_runspliced = corrected_counts - corrected_rspliced
+
+    so the two are non-negative integers that sum exactly to `corrected_counts`
+    (the spliced share is floored, the remainder goes to unspliced). Where
+    rs + ru == 0 the corrected count must be 0 -- CellBender removes counts,
+    never adds -- and a violation raises rather than being allocated. Computed
+    in dense row blocks so the arithmetic is exact and the sparse result carries
+    no explicit zeros.
+
+    Args:
+        adata (AnnData): One sample's object, modified in place.
+        sample (str): Sample name, for the log lines.
+        logger (logging.Logger, optional): Where the summary line goes.
+        chunk_rows (int): Rows per dense block.
+
+    Returns:
+        dict: The provenance record, also written to `adata.uns['corrected_layers']`.
+
+    Raises:
+        KeyError: If a source layer is missing.
+        ValueError: If any (cell, gene) has corrected_counts > 0 with rs + ru == 0.
+    """
+    logger = logger or logging.getLogger('IntegrateLogging')
+    missing = [k for k in (CORRECTED_SOURCE, *SPLIT_SOURCES) if k not in adata.layers]
+    if missing:
+        raise KeyError(
+            '[Integrate] derive_corrected_layers needs layer(s) {} on {!r}; present: {}'.format(
+                ', '.join(missing), sample, ', '.join(sorted(adata.layers))))
+    cc_all = sp.csr_matrix(adata.layers[CORRECTED_SOURCE])
+    rs_all = sp.csr_matrix(adata.layers[SPLIT_SOURCES[0]])
+    ru_all = sp.csr_matrix(adata.layers[SPLIT_SOURCES[1]])
+
+    s_blocks, u_blocks = [], []
+    n_bad = n_over = 0
+    for start in range(0, adata.n_obs, chunk_rows):
+        stop = min(start + chunk_rows, adata.n_obs)
+        cc = cc_all[start:stop].toarray()
+        rs = rs_all[start:stop].toarray()
+        ru = ru_all[start:stop].toarray()
+        tot = rs + ru
+        n_bad += int(((tot == 0) & (cc > 0)).sum())
+        n_over += int((cc > tot).sum())
+        with np.errstate(divide='ignore', invalid='ignore'):
+            frac = np.where(tot > 0, rs / np.where(tot > 0, tot, 1.0), 0.0)
+        # Floor of the exact product, then clip so float error can never put
+        # the spliced share above the corrected count itself.
+        s = np.minimum(np.floor(cc * frac), cc)
+        u = cc - s
+        s_blocks.append(sp.csr_matrix(s))
+        u_blocks.append(sp.csr_matrix(u))
+    if n_bad:
+        raise ValueError(
+            '[Integrate] derive_corrected_layers on {!r}: {} (cell, gene) entries have '
+            'corrected_counts > 0 where rspliced + runspliced == 0, so the split is '
+            'undefined. CellBender only removes counts, so this means the layers do not '
+            'describe the same matrix.'.format(sample, n_bad))
+    spliced = sp.vstack(s_blocks, format='csr')
+    unspliced = sp.vstack(u_blocks, format='csr')
+    spliced.eliminate_zeros()
+    unspliced.eliminate_zeros()
+    adata.layers[CORRECTED_SPLIT_LAYERS[0]] = spliced
+    adata.layers[CORRECTED_SPLIT_LAYERS[1]] = unspliced
+
+    record = {
+        'method': 'floor_spliced_share',
+        'formula': 'corrected_rspliced = floor(corrected_counts * rspliced / (rspliced + '
+                   'runspliced)); corrected_runspliced = corrected_counts - corrected_rspliced',
+        'source': CORRECTED_SOURCE, 'split': list(SPLIT_SOURCES),
+        'layers': list(CORRECTED_SPLIT_LAYERS),
+        'n_cells': int(adata.n_obs), 'n_genes': int(adata.n_vars),
+        'sum_corrected': float(cc_all.sum()),
+        'sum_corrected_rspliced': float(spliced.sum()),
+        'sum_corrected_runspliced': float(unspliced.sum()),
+        'sum_rspliced': float(rs_all.sum()), 'sum_runspliced': float(ru_all.sum()),
+        # Entries where CellBender's output exceeds the raw sum: expected 0.
+        'n_corrected_gt_raw': int(n_over),
+    }
+    adata.uns['corrected_layers'] = record
+    logger.info(
+        '[Integrate] %r: derived %s from %s (floor spliced share): spliced share %.3f of '
+        'corrected vs %.3f of raw; %d entries with corrected > raw.', sample,
+        '+'.join(CORRECTED_SPLIT_LAYERS), CORRECTED_SOURCE,
+        record['sum_corrected_rspliced'] / max(record['sum_corrected'], 1.0),
+        record['sum_rspliced'] / max(record['sum_rspliced'] + record['sum_runspliced'], 1.0),
+        n_over)
+    if n_over:
+        logger.warning(
+            '[Integrate] %r: %d (cell, gene) entries have corrected_counts above rspliced + '
+            'runspliced; the split still sums to corrected_counts there.', sample, n_over)
+    return record
+
+
 class IntegrationManager:
     """Resolve one integration target and run it end to end."""
     def __init__(self, integration_config_path: Path, sample_metadata_path: Path, target: str, dimreduction: str, plot: bool,
@@ -86,6 +194,9 @@ class IntegrationManager:
         self.keep_layers = None
         # Overridden per target in run(); None = filter no genes.
         self.min_cells = None
+        # Overridden per target in run(); False = the mapping artifact's layers
+        # as they are. See derive_corrected_layers.
+        self.derive_corrected_layers = False
         self.config = load_integration_config(Path(integration_config_path))
         self.sample_metadata_path = sample_metadata_path
         # Same resolver the mapping stage uses, so `batch` (and anything else
@@ -202,10 +313,15 @@ class IntegrationManager:
                                            fallback=self.artifact_fallback)
             return sc.read_h5ad(path), manifest
 
+        derived = {}
         for s in all_samples:
             adata, manifest = _load_adata(s)
+            # Before any layer is dropped: the split reads rspliced/runspliced,
+            # which keep_layers need not name.
+            if self.derive_corrected_layers:
+                derived[s] = derive_corrected_layers(adata, s, self.logger)
             _drop_per_sample_embeddings(adata, s, self.logger)
-            _drop_unused_layers(adata, s, self.keep_layers, self.logger)
+            _drop_unused_layers(adata, s, self._layers_to_keep(), self.logger)
             if "sample" not in adata.obs:
                 adata.obs["sample"] = s
             if "batch" not in adata.obs:
@@ -234,8 +350,55 @@ class IntegrationManager:
         combined = ad.concat(adatas, join="outer", label="concat_sample", keys=samples)
         combined.obs["sample"] = combined.obs["sample"].astype("category")
         combined.obs["batch"] = combined.obs["batch"].astype("category")
+        if derived:
+            # ad.concat drops .uns; the per-sample derivation records travel
+            # with the target instead.
+            combined.uns['corrected_layers'] = derived
         self._filter_genes(combined)
         return combined
+
+    def _layers_to_keep(self):
+        """`keep_layers`, plus the two derived layers when the target derives them.
+
+        Returns:
+            list[str] or None: Layers to keep per sample; None keeps everything.
+        """
+        if self.keep_layers is None:
+            return None
+        keep = list(self.keep_layers)
+        if self.derive_corrected_layers:
+            keep += [k for k in CORRECTED_SPLIT_LAYERS if k not in keep]
+        return keep
+
+    def _read_gene_list(self, path):
+        """The gene ids in an `exclude_genes:` file, or None when the target names none.
+
+        One id per line; blank lines and `#` comments are skipped.
+
+        Args:
+            path (str or None): Resolved file path.
+
+        Returns:
+            set[str] or None: The ids.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+        """
+        if not path:
+            return None
+        path = Path(path)
+        if not path.is_file():
+            raise FileNotFoundError(
+                '[Integrate] exclude_genes file for target {!r} does not exist: {}'.format(
+                    self.target, path))
+        genes = set()
+        with open(path) as fh:
+            for line in fh:
+                line = line.split('#', 1)[0].strip()
+                if line:
+                    genes.add(line)
+        self.logger.info('[Integrate] exclude_genes: %d gene id(s) read from %s', len(genes), path)
+        return genes
 
     def _filter_genes(self, adata):
         """Drop genes detected in fewer than `self.min_cells` cells, in place.
@@ -508,10 +671,17 @@ class IntegrationManager:
                 run continues.
         """
         from .contrastive import (select_contrast_grid, best_grid_point, METHOD_NAME as _CVI)
-        from .cvi_sweep import build_grid, DEFAULT_PENALTIES, DEFAULT_SALIENT
+        from .cvi_sweep import (build_grid, default_penalties, DEFAULT_SALIENT,
+                                DEFAULT_SEEDS)
 
+        # The ladder narrows with cohort size so one contrast's grid stays inside
+        # one job; `default_penalties` owns that rule and the nesting that keeps a
+        # narrowed ladder comparable to its null. A target's own `sweep_grid:`
+        # still wins, which is the escape hatch for a contrast the rule sizes
+        # wrongly.
         grid_cfg = args.get('sweep_grid') or {}
-        grid = build_grid(grid_cfg.get('wasserstein_penalty', DEFAULT_PENALTIES),
+        penalties = grid_cfg.get('wasserstein_penalty') or default_penalties(adata.n_obs)
+        grid = build_grid(penalties,
                           grid_cfg.get('n_salient_latent', DEFAULT_SALIENT))
         out_dir = self.output_dir / _CVI / self.target
         self.logger.info('[MAIN] sweep: %d grid point(s) for %s', len(grid), self.target)
@@ -523,6 +693,20 @@ class IntegrationManager:
         # base_model_params IS NOT OPTIONAL despite its default -- without it the
         # grid ranks penalties at contrastive._MODEL_DEFAULTS' n_layers=1 while
         # the winner trains at the target's own depth.
+        #
+        # seeds IS NOT OPTIONAL EITHER, and was missing until 2026-08-07. It
+        # defaults to (0,) in select_contrast_grid, so this path -- the one every
+        # `sweep: true` target uses -- fitted ONE point per grid cell while the
+        # cvi_sweep CLI beside it used DEFAULT_SEEDS' three. That made
+        # best_grid_point's "MEDIAN across replicates" a median of one, on
+        # `quality = separation - leakage_ratio`, where leakage_ratio is the
+        # column with enough fit-to-fit variance to reorder the top rows: an
+        # identical re-run of 10x_BAP moved it 0.353 -> 0.556 while separation
+        # held at 0.324 vs 0.343. run_cvi_sweep.sh's header had already recorded
+        # the consequence -- "with one fit per point the top rows were separated
+        # by less than their own variance" -- against the other entry point.
+        # The two callers now agree; passing it explicitly rather than changing
+        # the default keeps a bare select_contrast_grid() call cheap.
         base_params = (args.get('model_params') or {}).get('model_params') or {}
         df = select_contrast_grid(
             adata.copy(), background_samples=args['background'],
@@ -530,7 +714,7 @@ class IntegrationManager:
             covariates=args['covariates'], batch_key=batch_key,
             layer=(args.get('keep_layers') or ['corrected_counts'])[0],
             train_args=args.get('train_args'), base_model_params=base_params,
-            out_dir=out_dir, logger=self.logger)
+            out_dir=out_dir, logger=self.logger, seeds=DEFAULT_SEEDS)
 
         chosen = best_grid_point(df)
         if not chosen:
@@ -578,6 +762,8 @@ class IntegrationManager:
         # Same timing, same reason. None = no gene filtering, which every target
         # written before this key existed relies on.
         self.min_cells = args.get("min_cells")
+        # Same timing again: the split runs per sample inside _concatenate_adata.
+        self.derive_corrected_layers = bool(args.get("derive_corrected_layers"))
 
         # Kept so diagnostics can read .history for the training-loss curves.
         # None on the scArches path and on any failure before training.
@@ -596,11 +782,16 @@ class IntegrationManager:
                                                   tune_metric=args["tune_metric"], tune_mode=args["tune_mode"],
                                                   model_args=args["model_params"], train_args=args["train_args"],
                                                   search_space=args.get("search_space"),
-                                                  overwrite=self.overwrite)
+                                                  overwrite=self.overwrite,
+                                                  hvg_batch_key=args.get("hvg_batch_key"),
+                                                  exclude_genes=self._read_gene_list(args.get("exclude_genes")))
                 # batch_key comes from the target rather than integrate()'s own
                 # default, so a treated cohort is not silently corrected on
-                # `batch`. See docs/decisions/batch-keys-and-confounds.md.
-                adata = integrator.integrate(batch_key=batch_key)
+                # `batch`. See docs/decisions/batch-keys-and-confounds.md. The
+                # layer likewise: unstated resolves to corrected_counts, a list
+                # of two trains on both as separate features.
+                adata = integrator.integrate(batch_key=batch_key,
+                                             layer=args.get("layer") or 'corrected_counts')
                 model = integrator.model
             elif method == "contrastiveVI":
                 adata = self._concatenate_adata(samples=args["samples"])

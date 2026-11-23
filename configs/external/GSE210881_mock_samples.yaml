@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=../schemas/sample_sheet.schema.json
+# GSE210881 -- Cervantes-Perez et al. 2022 Mol Plant (doi 10.1016/j.molp.2022.10.021).
+# Medicago A17, 6-day-old roots, 48 h water mock vs S. meliloti; FACS-sorted
+# nuclei (sNucRNA-seq). Fetched 2026-09-24 (manifest
+# data/FQfiles/external/manifests/GSE210881_runtable.tsv).
+#
+# CHEMISTRY: GEO says "single cell 3' v2"; the reads say v3. On 1M R1 reads per
+# run, 92-95% of R1[1:16] are in the v3 whitelist vs 1.3-1.7% in v2 (all of
+# those in the v2/v3 overlap), and polyT starts at position 29 (16+12+1).
+# R1 is 150 bp, so fetch's length-based chemistry detection could not fire.
+#
+# SRR20997730 and SRR20997728: ENA's https copy of _1 was served as an empty
+# directory on 2026-09-24, so these came via the SRA route (fasterq-dump
+# --include-technical): _1 = I1 (8 bp, unused), _2 = R1, _3 = R2.
+#
+# Rep 3 of each condition (SRR20997727, SRR20997723) is a NovaSeq run; the rest
+# are HiSeq 4000. Their R1 barcodes hit v3 at 94-95% but R1 lacks the polyT
+# after the UMI -- irrelevant to mapping (only R1[1:28] is read), watch QC.
+defaults:
+  mapper: alevin
+  qc_filter: default
+  qc_metrics: default
+  sample_type: nuclei
+  tech: 10xv3
+samples:
+  GSE210881_Mock_root_1:
+    batch: GSE210881_Mock_root_1
+    mapping_config: default
+    treatment: mock
+    time_h: 0
+    fastq1:
+    - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/external/Medicago/GSE210881/Mock_root_1/SRR20997730_2.fastq.gz
+    - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/external/Medicago/GSE210881/Mock_root_1/SRR20997731_1.fastq.gz
+    fastq2:
+    - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/external/Medicago/GSE210881/Mock_root_1/SRR20997730_3.fastq.gz
+    - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/external/Medicago/GSE210881/Mock_root_1/SRR20997731_2.fastq.gz
+
+  GSE210881_Mock_root_2:
+    batch: GSE210881_Mock_root_2
+    mapping_config: default
+    treatment: mock
+    time_h: 0
+    fastq1:
+    - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/external/Medicago/GSE210881/Mock_root_2/SRR20997728_2.fastq.gz
+    - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/external/Medicago/GSE210881/Mock_root_2/SRR20997729_1.fastq.gz
+    fastq2:
+    - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/external/Medicago/GSE210881/Mock_root_2/SRR20997728_3.fastq.gz
+    - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/external/Medicago/GSE210881/Mock_root_2/SRR20997729_2.fastq.gz
+
+  GSE210881_Mock_root_3:
+    batch: GSE210881_Mock_root_3
+    mapping_config: default
+    treatment: mock
+    time_h: 0
+    fastq1:
+    - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/external/Medicago/GSE210881/Mock_root_3/SRR20997727_1.fastq.gz
+    fastq2:
+    - /lustre/nobackup/WUR/PDB/adema026/scRNAseq/data/FQfiles/external/Medicago/GSE210881/Mock_root_3/SRR20997727_2.fastq.gz

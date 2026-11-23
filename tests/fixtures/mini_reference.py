@@ -10,8 +10,8 @@ the end-to-end test can assert content rather than merely non-emptiness.
 It is also small (a few hundred KB, built in about a second), deterministic, and
 depends on no data that might be archived or moved.
 
-The only external dependency is the 10x v3 barcode whitelist, because simpleaf
-filters against it -- inventing barcodes would make every read unassigned.
+The permit list is generated alongside the reads and supplied explicitly to
+simpleaf. No private whitelist or biological reference is needed.
 """
 
 from __future__ import annotations
@@ -93,3 +93,16 @@ def write_reads(out_dir, reference, whitelist, n_barcodes=20,
     paths['truth'] = truth
     paths['n_pairs'] = len(r1)
     return paths
+
+
+def write_whitelist(path, n_barcodes=20, seed=17):
+    """Deterministic synthetic 16bp barcodes, separated by at least 4 bases."""
+    rng = np.random.default_rng(seed)
+    barcodes = []
+    while len(barcodes) < n_barcodes:
+        barcode = ''.join(rng.choice(list('ACGT'), BARCODE_LEN))
+        if all(sum(a != b for a, b in zip(barcode, other)) >= 4 for other in barcodes):
+            barcodes.append(barcode)
+    path = pathlib.Path(path)
+    path.write_text('\n'.join(barcodes) + '\n')
+    return path

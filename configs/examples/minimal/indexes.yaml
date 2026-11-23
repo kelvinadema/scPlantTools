@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=../../schemas/index_config.schema.json
+# Example only: copy to configs/local and edit paths before running.
+indexes:
+  AFdefault:
+    mapper: alevin
+    idx_path: indices/example/AFdefault
+    extra_index_args:
+    - --ref-type
+    - spliceu
+    - --rlen
+    - '90'
+    genome:
+    - data/example/genome.fasta
+    gtf:
+    - data/example/annotation.gtf

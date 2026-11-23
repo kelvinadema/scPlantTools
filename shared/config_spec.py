@@ -49,7 +49,15 @@ INTEGRATION_METHODS = ('scVI', 'scArches', 'contrastiveVI')
 # JointEmbeddingSCVI. contrastiveVI is a *method* instead, because it subclasses
 # BaseModelClass only and its train() takes two required positional index lists --
 # SingleCellIntegrate's `model.train(**train_args)` cannot drive it.
-INTEGRATION_MODEL_CLASSES = ('SCVI', 'JointEmbeddingSCVI', 'DRVI')
+#
+# SysVI is admitted despite NOT subclassing SCVI. It meets the two requirements
+# that actually matter -- the uniform setup/init/train path and ArchesMixin --
+# and integrate.py handles the four places it departs from the scVI contract
+# explicitly: a Gaussian reconstruction likelihood (so log-normalized input,
+# not counts), no labels_key, a REQUIRED batch_key, and a train() that resets
+# KL warmup to 0. Each of those is silent if unhandled, which is why they are
+# named sets there rather than isinstance checks.
+INTEGRATION_MODEL_CLASSES = ('SCVI', 'JointEmbeddingSCVI', 'DRVI', 'SysVI')
 
 # Per-filter execution modes, set as `mode:` on each block in
 # filter_config.yaml. Replaced a boolean `enabled:`:
@@ -550,10 +558,25 @@ INTEGRATION_TARGET = Field(
                         doc='contrastiveVI targets: the perturbed samples whose target-specific '
                             'variation the salient latent should isolate. Must be disjoint from '
                             'Background.'),
-        'covariates': Field('array', 'string', items=Field('string'),
-                            doc='.obs columns passed to scVI as continuous covariates. A name that '
-                                'is not present in .obs is silently dropped at integrate.py:79 and '
-                                'the model trains without it -- validate.py checks these.'),
+        'covariates': Field('array', 'string', 'object', items=Field('string'),
+                            properties={
+                                'categorical': Field('array', items=Field('string'),
+                                                     doc='.obs columns registered as CATEGORICAL '
+                                                         'covariates.'),
+                                'continuous': Field('array', items=Field('string'),
+                                                    doc='.obs columns registered as CONTINUOUS '
+                                                        'covariates.')},
+                            doc='.obs columns passed to scVI as covariates. A bare LIST means '
+                                'all-continuous, which is what almost every target wants and why '
+                                'it is the common form. The OBJECT form -- {categorical: [...], '
+                                'continuous: [...]} -- has been supported by '
+                                'targets.py::parse_covariates all along but was rejected by this '
+                                'schema until 2026-08-17, so a target needing a categorical '
+                                'covariate could not be written. SysVI targets need it: their '
+                                'batch_key is the SYSTEM (sample_type) and the per-sample batch '
+                                'goes here as categorical instead. A name that is not present in '
+                                '.obs is silently dropped at integrate.py:79 and the model trains '
+                                'without it -- validate.py checks these.'),
         'batch_key': Field('string', 'array', 'object',
                            doc="The .obs column scVI corrects on. Unstated means 'batch' (the "
                                'sample sheet\'s own batch string, backfilled by resolve_batch); '
@@ -624,6 +647,48 @@ INTEGRATION_TARGET = Field(
                                'cohort a floor of 10 is 0.004% of cells: it removes genes carrying '
                                'no information rather than genes carrying rare-population signal, '
                                'which is what makes it a safe substitute for a variance ranking.'),
+        # Four keys added 2026-09-10 for Chapter 3's two-layer label spaces.
+        # All default to "as before": a target that states none of them trains
+        # exactly as it did. See docs/decisions/two-layer-label-spaces.md.
+        'derive_corrected_layers': Field(
+            'boolean',
+            doc='Derive ambient-corrected spliced/unspliced layers per sample before '
+                'concatenation: corrected_rspliced = floor(corrected_counts * rspliced / '
+                '(rspliced + runspliced)) and corrected_runspliced = corrected_counts - '
+                'corrected_rspliced, per gene per cell, so the two sum exactly to '
+                'corrected_counts. rspliced + runspliced == 0 with corrected_counts > 0 is '
+                'an error (CellBender removes counts, never adds). Reads rspliced/runspliced '
+                'off the mapping artifact BEFORE keep_layers drops anything, and the two '
+                'derived layers are kept automatically. Second-order exact: CellBender '
+                'removed 1-7% of counts per cell here, so the misallocation is bounded by '
+                'that fraction. Default False.'),
+        'layer': Field(
+            'string', 'array', items=Field('string'),
+            doc='Count layer the scVI-path model trains on. Unstated means corrected_counts, '
+                'as it always was. A LIST OF TWO layers trains on a 2 x genes feature matrix '
+                '-- every gene contributes one feature per layer, named <gene>__s and '
+                '<gene>__u -- so the model sees spliced and unspliced counts as separate '
+                'inputs rather than their sum, and HVG selection runs on that feature space. '
+                'The fitted latent is written back onto the ordinary gene-space object, with '
+                '.var[hvg_spliced] / .var[hvg_unspliced] marking which features trained and '
+                'the derivation in .uns[labelspace]. SysVI derives its log-normalised input '
+                'from whatever matrix it is given, so it works on the doubled matrix unchanged.'),
+        'hvg_batch_key': Field(
+            'string',
+            doc='The .obs column HVG rankings are aggregated over when do_hvg is on '
+                '(shared/hvg.py::select_hvg(batch_key=...)). Unstated means batch, as it '
+                'always was. Distinct from batch_key on purpose: the model may correct per '
+                'library while the gene set is balanced per modality (sample_type), so the '
+                'larger libraries do not dominate which genes are chosen.'),
+        'exclude_genes': Field(
+            'string',
+            doc='Path to a gene-list file (one id per line, # comments) removed from the '
+                'training object after concatenation and before HVG selection; with a '
+                'two-layer `layer` both features of a listed gene go. The SAVED h5ad keeps '
+                'every gene, with .var[excluded] marking the list, so marker calling and '
+                'annotation scoring still see them. ${VAR} is expanded from the environment. '
+                'Used for organelle and ribosomal-protein genes, which otherwise rank as '
+                'modality-discriminating HVGs.'),
         'do_hvg': Field('boolean',
                         doc='Run the 8-method HVG consensus before training. Default False. Note '
                             'the gene floor that runs with it is HVGSelector-internal, so turning '
@@ -646,7 +711,8 @@ INTEGRATION_TARGET = Field(
         'search_space': Field('object',
                               doc='Override the autotune search space, merged PER KEY over this '
                                   "model_class's built-in default (integrate.py's "
-                                  '_SEARCH_SPACE_DEFAULTS, one per SCVI/JointEmbeddingSCVI/DRVI). '
+                                  '_SEARCH_SPACE_DEFAULTS, one per '
+                                  'SCVI/JointEmbeddingSCVI/DRVI/SysVI). '
                                   'State only what differs. Values: a LIST becomes tune.choice over '
                                   'it, so a 1-element list pins a parameter; a single-key mapping '
                                   'like {loguniform: [1.0e-4, 1.0e-2]} becomes that ray sampler; '
@@ -756,6 +822,9 @@ REFINE_TARGET = Field(
     doc='One refinement target: an annotated dataset, its decisions, and where the six '
         'per-method models are written.',
     properties={
+        'seeds': Field('object', doc="Per-target override of the top-level `seeds` block (same keys; the target's values "
+                                     'win). Added 2026-09-14: chapter 3 runs `quantile_scope: geneset` for At_tip_ls_H '
+                                     'and `group` for the Medicago target.'),
         'adata': Field('string', required=True,
                        doc='The .h5ad stage 1 annotated. Must be the same object -- the geneset '
                            'scores and decisions are keyed on its barcodes.'),
@@ -811,6 +880,13 @@ REFINE_CONFIG = Field(
                         'placeholders -- they yield ~7.5% of cells as seeds on MtTip_noHVG, which '
                         'is deliberate but untested against propagation quality.',
                     properties={
+                        'quantile_scope': Field('string', enum=['group', 'geneset'],
+                                                doc="Combined run only. 'group' (default): the seed quantile is taken over all cells a "
+                                                    'review group wins, so a group uniting two clusters with different score scales '
+                                                    "seeds only the higher-scoring one. 'geneset': the quantile is taken per winning "
+                                                    'member geneset within the group (falls back to the group cutoff below 10 cells); '
+                                                    'exclusivity is unchanged. Added 2026-09-14 for chapter 3 (C2 addendum: nuclei-only '
+                                                    'pericycle on At_tip_ls_H).'),
                         'quantile': Field('number',
                                           doc='Per-geneset score quantile a cell must clear. Per '
                                               'geneset, not global: scores are not comparable '
@@ -875,6 +951,13 @@ REFINE_CONFIG = Field(
                         'min_dist': Field('number'),
                         'leiden_resolution': Field('number'),
                         'random_state': Field('integer'),
+                        'compare_models': Field(
+                            'boolean',
+                            doc='Also embed every OTHER latent the run fitted -- the base '
+                                'scVI and whichever comparison arms ran -- with these same '
+                                'settings, into that model\'s own directory. On by default: '
+                                'the arms exist to be compared and the comparison is visual. '
+                                'Costs one neighbours+UMAP per extra latent.'),
                     }),
                 'report': Field(
                     'object',

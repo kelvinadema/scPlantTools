@@ -41,53 +41,9 @@ from fixtures import mini_reference          # noqa: E402
 pytestmark = pytest.mark.slow
 
 
-def _find_root():
-    here = pathlib.Path(__file__).resolve()
-    for p in [here, *here.parents]:
-        if (p / '.root').exists():
-            return p
-    raise RuntimeError('no .root')
-
-
-REPO_ROOT = _find_root()
-
-
-def _whitelist():
-    """
-    The 10x v3 whitelist, as `technology_config.yaml` declares it.
-
-    Read from the config rather than built from REPO_ROOT on purpose. `data/`
-    exists only on the nobackup tier while `.root` (and this file) live on the
-    backup tier, so a REPO_ROOT-relative path resolves to nothing and every test
-    here skips silently -- which is exactly what happened the first time.
-    Reading the config also means this tests the path the pipeline actually uses.
-    """
-    import yaml
-
-    def walk(node):
-        # Recursive: the whitelist sits three levels down under the chemistry
-        # entry, and a fixed-depth walk missed it.
-        if isinstance(node, str):
-            return pathlib.Path(node) if '10xv3Whitelist' in node else None
-        if isinstance(node, dict):
-            node = node.values()
-        if isinstance(node, (list, tuple)) or hasattr(node, '__iter__'):
-            for item in node:
-                found = walk(item)
-                if found is not None:
-                    return found
-        return None
-
-    cfg = yaml.safe_load((REPO_ROOT / 'configs/technology_config.yaml').read_text()) or {}
-    return walk(cfg)
-
-
-WHITELIST = _whitelist()
-
-
 def _require(binary):
     if shutil.which(binary) is None:
-        pytest.skip('{} not on PATH -- run this in scMappingV3.12'.format(binary))
+        pytest.fail('{} not on PATH -- run this in scMappingV3.12'.format(binary))
 
 
 @pytest.fixture(scope='module')
@@ -102,20 +58,20 @@ def workspace(tmp_path_factory):
     """
     _require('simpleaf')
     _require('piscem')
-    if WHITELIST is None or not WHITELIST.exists():
-        pytest.skip('10x v3 whitelist not found via technology_config.yaml')
+    _require('alevin-fry')
 
     ws = tmp_path_factory.mktemp('e2e')
+    whitelist = mini_reference.write_whitelist(ws / 'permit-list.txt')
     env = dict(os.environ)
     env['ALEVIN_FRY_HOME'] = str(ws / 'af_home')
     (ws / 'af_home').mkdir()
 
     r = subprocess.run(['simpleaf', 'set-paths'], env=env, capture_output=True, text=True)
     if r.returncode != 0:
-        pytest.skip('simpleaf set-paths failed: {}'.format(r.stderr.strip()[:200]))
+        pytest.fail('simpleaf set-paths failed: {}'.format(r.stderr.strip()[:200]))
 
     ref = mini_reference.write_reference(ws / 'ref')
-    reads = mini_reference.write_reads(ws / 'reads', ref, WHITELIST)
+    reads = mini_reference.write_reads(ws / 'reads', ref, whitelist)
 
     idx = ws / 'idx'
     r = subprocess.run(
@@ -130,7 +86,7 @@ def workspace(tmp_path_factory):
          '--reads1', str(reads['r1']), '--reads2', str(reads['r2']),
          '--index', str(idx / 'index'), '--chemistry', '10xv3',
          '--resolution', 'cr-like', '--expected-ori', 'fw',
-         '--unfiltered-pl', str(WHITELIST),
+         '--unfiltered-pl', str(whitelist),
          '--t2g-map', str(ref['t2g']),
          '--output', str(quant), '--threads', '2'],
         env=env, capture_output=True, text=True, cwd=str(ws))

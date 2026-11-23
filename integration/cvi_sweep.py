@@ -57,9 +57,20 @@ because they trade against each other and the balance is a judgement call:
 A good point has high `separation`, low `leakage_ratio`, low `qc_max_abs_rho`,
 and a `responder_frac` that has not collapsed relative to penalty=0.
 
-COST. Each point is one full fit. On the CH5 contrasts that is ~2 min (nuclei,
-~5.6k cells) to ~2 h (bd_NOD, 94.7k), so size the grid to the contrast --
-`--penalties` and `--salient` exist for that.
+COST, AND HOW THE GRID SIZES ITSELF. Each point is one full fit per seed, run
+serially, and per-fit cost scales with cell count -- roughly 33 min at 95k cells
+down to ~1.5 min at 5.6k. The default grid is therefore not a constant:
+`default_penalties(n_obs)` narrows the ladder for larger cohorts so one
+contrast's grid stays inside one job, and the narrowed ladders are NESTED inside
+the full one so a large contrast is still measured at rungs its (differently
+sized) null contrast also has. Both entry points -- this CLI and the `sweep:
+true` orchestrator path -- go through that one function.
+
+Override per target with `sweep_grid:` in the integration config, or per run with
+`--penalties` / `--salient`. Sizing lives here rather than in a chapter's config
+because it follows from cell count and measured cost, not from what the contrast
+is about; a chapter that hand-classifies its own targets is re-deriving this rule
+and may disagree with it silently.
 """
 
 import argparse
@@ -76,13 +87,73 @@ from .contrastive import select_contrast_grid, summarise_contrast_grid, METHOD_N
 # The sub-1 rungs are kept because that is where leakage_ratio moves fastest,
 # even though the minimum lies higher.
 DEFAULT_PENALTIES = (0.0, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0)
-# n_salient_latent holds at the published default until a penalty is chosen;
-# sweeping both at once multiplies cost to answer a second-order question.
-DEFAULT_SALIENT = (10,)
+
+# Narrower ladders for cohorts where the full one does not fit in a job. NESTED
+# INSIDE DEFAULT_PENALTIES, and that is the constraint that shapes them, not
+# taste: a treated contrast's `separation` and `responder_frac` mean nothing
+# until there is a SAME-PENALTY number from a null contrast where no treatment
+# happened, and a null is usually a different size from the contrast it
+# calibrates. Non-nested ladders would put the two on rungs that never meet.
+#
+#   _PENALTIES_LARGE  subset of _PENALTIES_MID  subset of DEFAULT_PENALTIES
+#
+# What is dropped, and why in this order. 5/10/20 go first: every point at
+# penalty >= 1 collapsed on all five CH5 contrasts in the 2026-08-03 sweep, so
+# the high end is where the least information is -- but 1.0 and 2.0 are KEPT in
+# every ladder, because that measurement was made at n_layers=1 (before the
+# base_model_params fix of 2026-08-04) and the collapse boundary at the depth
+# these targets actually train at is still unmeasured. A ladder that stops below
+# the turnover is the mistake this file has already made twice. 0.05 goes next
+# as the finest sub-1 rung, then 0.1 and 0.5.
+_PENALTIES_MID = (0.0, 0.1, 0.25, 0.5, 1.0, 2.0)
+_PENALTIES_LARGE = (0.0, 0.25, 1.0, 2.0)
+
+# Cell counts at which the ladder narrows. Set from measured fit time -- roughly
+# 33 min per fit at 95k cells, scaling with cell count -- so that one contrast's
+# grid stays inside a single job at DEFAULT_SALIENT x DEFAULT_SEEDS. They are
+# deliberately round: the cost is continuous and the boundary is a judgement,
+# so a cohort that lands just the wrong side of one loses two rungs, not a
+# result.
+_MID_CELLS = 20_000
+_LARGE_CELLS = 80_000
+
+# Both axes are swept. n_salient_latent used to hold at (10,) on the argument
+# that capacity is a second-order question to be revisited after a penalty is
+# chosen -- but the two interact directly (raising salient capacity gives shared
+# variation more room to leak, which is what the penalty is resisting), so a
+# penalty chosen at one capacity does not transfer to another. Three rungs
+# around the published default is the smallest ladder that can show whether it
+# matters.
+DEFAULT_SALIENT = (5, 10, 20)
+
 # Three fits per point. Enough to see whether two points differ by more than the
 # noise, which one fit cannot show at all; more than three multiplies cost
 # against a spread that is already visible at three.
 DEFAULT_SEEDS = (0, 1, 2)
+
+
+def default_penalties(n_obs: int = None) -> tuple:
+    """The penalty ladder for a cohort of `n_obs` cells.
+
+    Sizing the ladder is pipeline logic, not a per-target choice: it follows from
+    the contrast's cell count and the measured per-fit cost, and hand-classifying
+    each target in a chapter config means every chapter re-derives the same rule
+    and gets to disagree with it. A target that genuinely needs a different
+    ladder still says so with `sweep_grid: {wasserstein_penalty: [...]}`, which
+    wins over this.
+
+    Args:
+        n_obs (int, optional): Cells in the contrast. `None` returns the full
+            ladder, which is the right answer when the size is not yet known.
+
+    Returns:
+        tuple[float]: Penalties, nested within `DEFAULT_PENALTIES`.
+    """
+    if n_obs is None or n_obs < _MID_CELLS:
+        return DEFAULT_PENALTIES
+    if n_obs < _LARGE_CELLS:
+        return _PENALTIES_MID
+    return _PENALTIES_LARGE
 
 
 def build_grid(penalties, salient):
@@ -105,7 +176,11 @@ def main(argv=None):
     parser.add_argument('--icfg', required=True, help='Path to integration_config.yaml')
     parser.add_argument('--scfg', required=True, help='Path to sample_metadata.yaml')
     parser.add_argument('--target', required=True, help='A contrastiveVI target name')
-    parser.add_argument('--penalties', type=float, nargs='+', default=list(DEFAULT_PENALTIES))
+    # Resolved after the AnnData is loaded, not here: the default ladder narrows
+    # with cohort size and the cell count is not known at parse time.
+    parser.add_argument('--penalties', type=float, nargs='+', default=None,
+                        help='Penalty ladder (default: sized from the cohort by '
+                             'default_penalties)')
     parser.add_argument('--salient', type=int, nargs='+', default=list(DEFAULT_SALIENT))
     parser.add_argument('--identity-key', default=None,
                         help='.obs column standing in for cell type in the leakage test '
@@ -141,9 +216,13 @@ def main(argv=None):
     manager.keep_layers = spec.get('keep_layers')
     adata = manager._concatenate_adata(samples=spec['samples'])
 
-    grid = build_grid(args.penalties, args.salient)
-    logger.info('[cvi_sweep] %s: %d grid point(s) over %d cells',
-                args.target, len(grid), adata.n_obs)
+    # Same rule the `sweep: true` orchestrator path uses, so the two entry points
+    # measure the same ladder for the same contrast.
+    penalties = args.penalties or default_penalties(adata.n_obs)
+    grid = build_grid(penalties, args.salient)
+    logger.info('[cvi_sweep] %s: %d grid point(s) x %d seed(s) over %d cells '
+                '(penalties: %s)', args.target, len(grid), len(args.seeds),
+                adata.n_obs, ', '.join(str(p) for p in penalties))
 
     out_dir = Path(args.out_dir) if args.out_dir else (
         manager.output_dir / METHOD_NAME / args.target)

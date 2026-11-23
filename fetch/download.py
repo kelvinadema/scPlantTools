@@ -59,8 +59,14 @@ def _curl(url: str, dest: str) -> None:
     # recv failure, curl exit 56), so a whole batch fails the moment the block
     # kicks in. --retry-all-errors makes every error retryable, and -C - resumes
     # the partial file across each retry rather than restarting from zero.
-    run_cmd(["curl", "-L", "--fail",
-             "--retry", "10", "--retry-delay", "15", "--retry-all-errors",
+    #
+    # FETCH_CURL_RETRIES raises the retry budget for hosts that drop the TLS
+    # connection every few seconds (NGDC download.cncb.ac.cn, 2026-09-28: 81
+    # drops in 5 h, so 10 retries ended a file long before it finished). -sS
+    # silences the progress meter (1.2 MB of log per job) but keeps errors.
+    retries = os.environ.get("FETCH_CURL_RETRIES", "10")
+    run_cmd(["curl", "-sS", "-L", "--fail",
+             "--retry", retries, "--retry-delay", "15", "--retry-all-errors",
              "--retry-connrefused", "-C", "-", "-o", dest, _with_scheme(url)])
 
 
@@ -184,6 +190,21 @@ def _download_sra(record: dict, dest_dir: str, threads: int, scratch: str) -> li
                 f"'{tool}' not found on PATH. The SRA route needs sra-tools + pigz "
                 f"(see batch_scripts/run_fetch.sh / the scFetch env)."
             )
+    # Resume guard. pigz is the last step and removes the uncompressed .fastq,
+    # so "gzipped files for this run present, no .fastq leftover" means the run
+    # finished. Mirrors _download_urls' size-based skip: without it a
+    # resubmitted fetch job re-prefetched and re-dumped every finished run
+    # (tens of GB each) before reaching the one that had failed.
+    if os.path.isdir(dest_dir):
+        have_gz = sorted(os.path.join(dest_dir, f) for f in os.listdir(dest_dir)
+                         if f.startswith(run) and f.endswith(".fastq.gz"))
+        leftover = [f for f in os.listdir(dest_dir)
+                    if f.startswith(run) and f.endswith(".fastq")]
+        if have_gz and not leftover:
+            log().info("[SKIP] %s: %d gzipped FASTQ(s) already complete in %s",
+                       run, len(have_gz), dest_dir)
+            return have_gz
+
     tmp = os.path.join(scratch, f"_sra_{run}")
     os.makedirs(tmp, exist_ok=True)
 

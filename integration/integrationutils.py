@@ -8,8 +8,8 @@ import importlib.metadata
 
 from contextlib import contextmanager
 from shared.utils import find_root_dir
-from scvi.model import SCVI
-from scvi.external import JointEmbeddingSCVI, DRVI
+from scvi.model import SCVI, SCANVI
+from scvi.external import JointEmbeddingSCVI, DRVI, SysVI
 import anndata
 
 # Mapping-stage h5ads carry pandas nullable StringArray obs columns (e.g.
@@ -20,16 +20,42 @@ import anndata
 # in integration, so set it once here rather than at each write site.
 anndata.settings.allow_write_nullable_strings = True
 
-# Every class here must subclass scvi.model.SCVI: SingleCellIntegrate drives them
-# all through one `setup_anndata` -> `cls(adata, **model_params)` -> `train(**kw)`
-# path, and refmapping relies on the inherited ArchesMixin for query mapping.
+# Every class here must satisfy TWO requirements, which until 2026-08-17 were
+# stated as the single stricter one "must subclass scvi.model.SCVI":
 #
-# DRVI qualifies (its MRO is SCVI -> EmbeddingMixin -> RNASeqMixin; it swaps only
-# the decoder for the additive split decoder). scvi.external.ContrastiveVI does
-# NOT and is deliberately absent -- it subclasses BaseModelClass and its train()
-# takes two required positional index lists, so it is wired in as a *method*
-# (integration/contrastive.py), not as a model_class here.
-MODEL_CLASSES = {"SCVI": SCVI, "JointEmbeddingSCVI": JointEmbeddingSCVI, "DRVI": DRVI}
+#   1. drivable through one `setup_anndata` -> `cls(adata, **model_params)` ->
+#      `train(**kw)` path, which is all SingleCellIntegrate knows how to do;
+#   2. carry ArchesMixin, which refmapping needs for query mapping.
+#
+# DRVI subclasses SCVI (its MRO is SCVI -> EmbeddingMixin -> RNASeqMixin; it
+# swaps only the decoder for the additive split decoder).
+#
+# SysVI DOES NOT subclass SCVI -- its MRO is UnsupervisedTrainingMixin ->
+# RNASeqMixin -> VAEMixin -> ArchesMixin -> BaseModelClass -- but it meets both
+# requirements above, which is why the invariant is written as the two rather
+# than as the proxy. It is admitted with four differences the integrate.py side
+# has to handle explicitly, all of them silent if it does not; see
+# `_GAUSSIAN_INPUT_CLASSES` and `_NO_KL_WARMUP_CLASSES` there.
+#
+# scvi.external.ContrastiveVI meets NEITHER and is deliberately absent -- it
+# subclasses BaseModelClass and its train() takes two required positional index
+# lists, so it is wired in as a *method* (integration/contrastive.py), not as a
+# model_class here.
+#
+# SCANVI is here but is NOT config-selectable, and that asymmetry is the point:
+# `shared/config_spec.py::INTEGRATION_MODEL_CLASSES` -- which drives the
+# `model_class:` enum in the schema -- deliberately omits it. This dict answers
+# "what class is a model I am about to LOAD?", which is the question
+# refmapping.py asks of a reference's registry entry; that enum answers "what
+# class may a target TRAIN from scratch?", which is a strictly smaller set.
+# SingleCellIntegrate cannot train a SCANVI at all: it is constructed by
+# `SCANVI.from_scvi_model(...)` on an already-fitted SCVI plus a labels_key, not
+# by `cls(adata, **model_params)`. The refine stage is what builds one
+# (refine/refine.py::_fit_scanvi), and the entry naming it as a scArches
+# reference is registered against that output. Adding SCANVI to the enum would
+# advertise a target type that fails at fit time.
+MODEL_CLASSES = {"SCVI": SCVI, "JointEmbeddingSCVI": JointEmbeddingSCVI, "DRVI": DRVI,
+                 "SysVI": SysVI, "SCANVI": SCANVI}
 
 
 def resolve_model_class(name: str):

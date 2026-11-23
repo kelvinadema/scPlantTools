@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=../../schemas/qc_config.schema.json
+# Example only: copy to configs/local and edit paths before running.
+QCconfigs:
+  default:
+    gtf_path: data/example/annotation.gtf
+    qc_metrics:
+      mitochondrial_fraction:
+        layer: corrected_counts
+        enabled: true
+        gtf_attribute: gene_id
+        gtf_value: MtrunA17_MT
+        gtf_match_type: prefix
+      chloroplast_fraction:
+        layer: corrected_counts
+        enabled: true
+        gtf_attribute: gene_id
+        gtf_value: MtrunA17_CP
+        gtf_match_type: prefix
+      ribosomal_rna_fraction:
+        layer: corrected_counts
+        enabled: true
+        gtf_attribute: gene_biotype
+        gtf_value: rRNA
+        gtf_match_type: exact
+      ribosomal_protein_fraction:
+        layer: corrected_counts
+        enabled: true
+        gtf_attribute: product
+        gtf_value: ribosomal protein
+        gtf_match_type: substring
+      ambient_fraction:
+        enabled: true
+        numerator: corrected_counts
+        denominator: raw_counts
+      spliced_fraction:
+        enabled: true
+        mask_with_zero: corrected_counts
+        numerator: rspliced
+        denominator:
+        - rspliced
+        - runspliced
+      cell_sparsity:
+        layer: corrected_counts
+        enabled: true
+        min_count: 1
+        min_cells: 5
+      cell_complexity:
+        layer: corrected_counts
+        enabled: true
+      fraction_top_n_genes:
+        enabled: true
+        layers:
+        - corrected_counts
+        n: 10
+      nUMI:
+        enabled: true
+        layers:
+        - raw_counts
+        - corrected_counts
+      nGenes:
+        enabled: true
+        layers:
+        - raw_counts
+        - corrected_counts
+      entropy:
+        enabled: true
+        layers:
+        - corrected_counts

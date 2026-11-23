@@ -312,6 +312,84 @@ def parse_covariates(raw):
     raise TargetConfigError("unsupported 'covariates' schema: {}".format(type(raw)))
 
 
+def parse_layer(raw):
+    """Normalize a target's `layer:` into a list of one or two layer names, or None.
+
+    None (unstated) keeps the historical default, `corrected_counts`, which the
+    integrator supplies. Two layers mean "train on both as separate features";
+    see docs/decisions/two-layer-label-spaces.md.
+
+    Args:
+        raw: The `layer:` value as written -- a string, a list of one or two
+            strings, or None.
+
+    Returns:
+        list[str] or None: The layer names.
+
+    Raises:
+        TargetConfigError: On an empty, non-string, repeated or too-long list.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        if not raw:
+            raise TargetConfigError('layer: empty string; omit the key to train on corrected_counts.')
+        return [raw]
+    if isinstance(raw, (list, tuple)):
+        layers = list(raw)
+        if not layers:
+            raise TargetConfigError('layer: empty list; omit the key to train on corrected_counts.')
+        if len(layers) > 2:
+            raise TargetConfigError(
+                'layer: {} layers given; at most two are supported (each gene becomes one '
+                'feature per layer).'.format(len(layers)))
+        for layer in layers:
+            if not isinstance(layer, str) or not layer:
+                raise TargetConfigError('layer: {!r} is not a layer name.'.format(layer))
+        if len(layers) == 2 and layers[0] == layers[1]:
+            raise TargetConfigError(
+                'layer: {!r} is listed twice; two layers must differ.'.format(layers[0]))
+        return layers
+    raise TargetConfigError("unsupported 'layer' schema: {}. Use a string or a list of one or "
+                            'two strings.'.format(type(raw)))
+
+
+def expand_env_path(raw, key='path'):
+    """Expand `${VAR}` in a path-valued target key, or return None for None.
+
+    Same expansion `extends:` gets, so a chapter overlay can write
+    `${SCRNASEQ_ROOT}/...` or `${SC_NOTEBOOKS}/...` rather than one machine's
+    layout. An unexpanded variable is an error, not a literal path.
+
+    Args:
+        raw (str or None): The value as written.
+        key (str): The key name, for the error message.
+
+    Returns:
+        str or None: The expanded path.
+
+    Raises:
+        TargetConfigError: If a `${VAR}` is left unexpanded, or the value is not a string.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw:
+        raise TargetConfigError('{}: expected a path string, got {!r}.'.format(key, raw))
+    env = dict(os.environ)
+    if not env.get('SCRNASEQ_ROOT'):
+        try:
+            from .utils import find_root_dir
+            env['SCRNASEQ_ROOT'] = str(find_root_dir())
+        except Exception:                    # not inside a checkout; leave it unset
+            pass
+    expanded = Template(raw).safe_substitute(env)
+    if '$' in expanded:
+        raise TargetConfigError(
+            '{}: {!r} still contains an unexpanded variable after expansion ({!r}). Set it in '
+            'the environment, or write an absolute path.'.format(key, raw, expanded))
+    return str(Path(expanded).expanduser())
+
+
 # ---------------------------------------------------------------------------
 # batch_key: one column, several combined into one, or a per-cohort mapping.
 # ---------------------------------------------------------------------------
@@ -553,6 +631,9 @@ def resolve_run_spec(config: dict, target: str) -> dict:
         # Same placement reason as keep_layers. None means no filtering: every
         # target predating this key must keep the gene set it was fitted on.
         'min_cells': cfg.get('min_cells'),
+        # Per-sample derivation of corrected_rspliced/corrected_runspliced at
+        # concatenation. False for every target that does not ask.
+        'derive_corrected_layers': bool(cfg.get('derive_corrected_layers') or False),
     }
 
     if method == 'scVI':
@@ -573,6 +654,12 @@ def resolve_run_spec(config: dict, target: str) -> dict:
             # the note above), and the defaults are ray tune values.
             'search_space': cfg.get('search_space'),
             'train_args': _train_args(cfg),
+            # Label-space keys (docs/decisions/two-layer-label-spaces.md). Each
+            # resolves to None when unstated, and None means "as before":
+            # corrected_counts, per-`batch` HVG aggregation, no exclusions.
+            'layer': parse_layer(cfg.get('layer')),
+            'hvg_batch_key': cfg.get('hvg_batch_key'),
+            'exclude_genes': expand_env_path(cfg.get('exclude_genes'), 'exclude_genes'),
         })
     elif method == 'contrastiveVI':
         background = _require(cfg, target, 'Background')

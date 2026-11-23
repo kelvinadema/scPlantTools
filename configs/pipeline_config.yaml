@@ -22,6 +22,58 @@ cohorts:
     samples: configs/external/external_metadata.yaml
   marcantia:
     samples: configs/MarcantiaSample.yaml
+  # C14 read-budget grid (Chapter 3, 2026-09-19): one cohort per fraction so the
+  # five fractions run on five GPU nodes; all write to results/mapping_C14/.
+  medicago_c14_f05:
+    samples: configs/C14/medicago_c14_f05.yaml
+    output_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/mapping_C14
+  medicago_c14_f10:
+    samples: configs/C14/medicago_c14_f10.yaml
+    output_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/mapping_C14
+  medicago_c14_f25:
+    samples: configs/C14/medicago_c14_f25.yaml
+    output_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/mapping_C14
+  medicago_c14_f50:
+    samples: configs/C14/medicago_c14_f50.yaml
+    output_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/mapping_C14
+  medicago_c14_f75:
+    samples: configs/C14/medicago_c14_f75.yaml
+    output_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/mapping_C14
+  arabidopsis_c14_f05:
+    samples: configs/C14/arabidopsis_c14_f05.yaml
+    output_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/mapping_C14
+  arabidopsis_c14_f10:
+    samples: configs/C14/arabidopsis_c14_f10.yaml
+    output_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/mapping_C14
+  arabidopsis_c14_f25:
+    samples: configs/C14/arabidopsis_c14_f25.yaml
+    output_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/mapping_C14
+  arabidopsis_c14_f50:
+    samples: configs/C14/arabidopsis_c14_f50.yaml
+    output_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/mapping_C14
+  arabidopsis_c14_f75:
+    samples: configs/C14/arabidopsis_c14_f75.yaml
+    output_dir: /lustre/nobackup/WUR/PDB/adema026/scRNAseq/results/mapping_C14
+  # GSE210881 (Cervantes-Perez et al. 2022 Mol Plant, 2026-09-24): Medicago
+  # root sNucRNA-seq, 48 h S. meliloti vs mock. Split by condition because the
+  # inoculated samples map to AFinduced; results land in results/mapping/.
+  gse210881_mock:
+    samples: configs/external/GSE210881_mock_samples.yaml
+  gse210881_inoc:
+    samples: configs/external/GSE210881_inoc_samples.yaml
+  # External Medicago atlas datasets (2026-09-28, docs/external-medicago-atlas.md).
+  # One cohort per dataset; the index is chosen PER SAMPLE via mapping_config
+  # (default vs induced), set by configs/external/atlas_overrides.yaml, so an
+  # inoculated/uninoculated mix needs no split. Sheets are written by
+  # batch_scripts/run_atlas_fetch.sh; results land in results/mapping/.
+  gse224539:
+    samples: configs/external/GSE224539_samples.yaml
+  gse240098:
+    samples: configs/external/GSE240098_samples.yaml
+  cra007849:
+    samples: configs/external/CRA007849_samples.yaml
+  cra008337:
+    samples: configs/external/CRA008337_samples.yaml
 
 # Used when --cohort is omitted. Deliberately set to the cohort `configs.samples`
 # already pointed at, so this file's behaviour is unchanged by default.

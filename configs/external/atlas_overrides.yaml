@@ -1,0 +1,83 @@
+# Curated design metadata for the external Medicago datasets that feed the
+# "total atlas" (published + own data). Applied to each fetch-emitted sheet by
+# `python -m fetch.overrides` inside batch_scripts/run_atlas_fetch.sh.
+#
+# Why a separate file: `fetch download` can only infer batch, tech and FASTQ
+# paths from the archive. Which INDEX a sample maps against (mapping_config:
+# default = Mt5 only, induced = Mt5 + S. meliloti 2011), treatment, time_h and
+# sample_type come from the paper. Keeping them here means a refetch
+# regenerates the sheet without losing the curation, and --strict makes a
+# renamed sample fail loudly instead of mapping against the wrong index.
+#
+# Sample keys are the EMITTED names: <dataset>_<sample_name>, where
+# sample_name is the ENA/GEO sample title (GEO datasets) or the FASTQ stem
+# (URL-mode datasets). `genotype` is not a pipeline key; it is carried for
+# the atlas .obs and ignored by mapping.
+#
+# treatment vocabulary (sample sheet schema): mock, NF, BAP, S_meliloti, none.
+# time_h is omitted on untreated samples (schema convention).
+#
+# Overview + provenance: docs/external-medicago-atlas.md
+
+datasets:
+
+  # Pereira et al. 2024 Cell Reports 43:113747 (doi 10.1016/j.celrep.2024.113747).
+  # A17 and sunn-4 root segments, 0/24/48/96 h after S. meliloti 1021; FACS
+  # nuclei; GEO says "3' v2", verify with fetch.chemistry. 2 runs per sample.
+  # sunn-4 libraries (Sunn4_0h..96h) are download=no in the run table -- not
+  # wanted for the atlas (user decision 2026-09-28) -- and have no keys here.
+  GSE224539:
+    defaults:
+      sample_type: nuclei
+    samples:
+      GSE224539_A17_0h:     {genotype: A17,    treatment: none}
+      GSE224539_A17_24h:    {genotype: A17,    treatment: S_meliloti, time_h: 24, mapping_config: induced}
+      GSE224539_A17_48h:    {genotype: A17,    treatment: S_meliloti, time_h: 48, mapping_config: induced}
+      GSE224539_A17_96h:    {genotype: A17,    treatment: S_meliloti, time_h: 96, mapping_config: induced}
+
+  # Serrano et al. 2024 Nature Plants 10:673 (doi 10.1038/s41477-024-01666-3).
+  # Only the NON-inoculated snRNA-seq libraries (med21ctrl, med28_2ctrl,
+  # med38ctrl; the R. irregularis-inoculated ones are download=no in the run
+  # table, and GSE240102 is Visium). A17, sand-grown, 21/28/38 d after (mock)
+  # inoculation; Chromium 3' v3.1.
+  GSE240098:
+    defaults:
+      sample_type: nuclei
+      treatment: none
+    samples:
+      GSE240098_med21ctrl:   {genotype: A17, time_h: 504}
+      GSE240098_med28_2ctrl: {genotype: A17, time_h: 672}
+      GSE240098_med38ctrl:   {genotype: A17, time_h: 912}
+
+  # Liu et al. 2023 Nature Plants 9:1734 (doi 10.1038/s41477-023-01524-8).
+  # NGDC PRJCA011245 / CRA007849. A17 7-d roots, nuclei, 0 / 0.5 / 6 / 24 h
+  # after Nod factor; two replicate sets (BioSamples 0hpi.. and 0hpi_rep2..).
+  # NF only -> Mt5 index (default). Run table written 2026-09-28 from the
+  # seqout.org export of the GSA run list (CRR548852-55 rep1, CRR718182-85
+  # rep2; the four Nanopore runs CRR548856-59 are download=no). Sample names
+  # are the BioSample names with '.' -> 'p' (0.5hpi -> 0p5hpi).
+  CRA007849:
+    defaults:
+      sample_type: nuclei
+    samples:
+      CRA007849_0hpi:        {genotype: A17, treatment: none}
+      CRA007849_0p5hpi:      {genotype: A17, treatment: NF, time_h: 0.5}
+      CRA007849_6hpi:        {genotype: A17, treatment: NF, time_h: 6}
+      CRA007849_24hpi:       {genotype: A17, treatment: NF, time_h: 24}
+      CRA007849_0hpi_rep2:   {genotype: A17, treatment: none}
+      CRA007849_0p5hpi_rep2: {genotype: A17, treatment: NF, time_h: 0.5}
+      CRA007849_6hpi_rep2:   {genotype: A17, treatment: NF, time_h: 6}
+      CRA007849_24hpi_rep2:  {genotype: A17, treatment: NF, time_h: 24}
+
+  # Ye et al. 2022 Molecular Plant 15:1852 (doi 10.1016/j.molp.2022.10.019).
+  # NGDC PRJCA012129 / CRA008337 (BioSamples SAMC899255/SAMC899256). 14 dpi
+  # S. meliloti nodules, PROTOPLASTS; bacteria present -> induced index.
+  # Runs CRR574231 (A17_NOD1) and CRR574232 (A17_NOD2), HiSeq 2500, ~115 GB each.
+  CRA008337:
+    defaults:
+      sample_type: protoplast
+      prep: 2h_only
+      mapping_config: induced
+      treatment: S_meliloti
+      time_h: 336
+    samples: {}
