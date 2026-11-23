@@ -121,7 +121,7 @@ def _group_assignment(scores: pd.DataFrame, membership: dict, quantile, margin,
                        (`quantile_scope='group'`), or per WINNING MEMBER
                        GENESET within the group (`quantile_scope='geneset'`)
 
-    **Why the scope option exists (chapter 3, C2 addendum 2026-09-13).** A
+    **Why the scope option exists.** A
     group that unites two clusters -- the reviewer saying "these are one cell
     type" -- unites two genesets whose z-scores live on different scales, and
     a single decile over the pooled assigned cells hands every seed to the

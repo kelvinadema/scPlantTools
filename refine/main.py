@@ -51,15 +51,7 @@ def _ontology_extensions(cfg):
 
 
 def _resolve_paths(cfg, root):
-    """Resolve the refine config's paths against the repo root.
-
-    Args:
-        cfg (dict): The refine config.
-        root (Path): Repo root.
-
-    Returns:
-        dict: The config with absolute paths.
-    """
+    """(annotation_dir, output_dir, log_dir), defaulting under the repo root."""
     annotation_dir = cfg.get('annotation_dir') or (root / 'results/annotation')
     output_dir = cfg.get('output_dir') or (root / 'results/refine')
     log_dir = cfg.get('log_dir') or (root / 'logs')
@@ -88,10 +80,8 @@ def do_propose(sample, target, annotation_dir, methods=None, force=False,
     """
     Write the starting grouping: genesets sharing an automatic top call, pooled.
 
-    A proposal, not an answer. It is exactly the merge the old per-method file
-    performed implicitly whenever two genesets happened to be given the same
-    id -- made explicit, extended across methods, and put somewhere the
-    reviewer can disagree with it.
+    A proposal, not an answer: the merge is made explicit, across methods, in a
+    file the reviewer edits.
     """
     sample_dir = Path(annotation_dir) / sample
     methods = methods or sorted(
@@ -131,20 +121,9 @@ def do_propose(sample, target, annotation_dir, methods=None, force=False,
 
 def main(config_path, sample=None, method=None, dry_run=False, force=False,
          allow_stale=False, do_propose_only=False, force_groups=False) -> int:
-    """Run stage 3 refinement for one sample.
+    """Run stage 3 for one target, or every target in the config; returns the exit status.
 
-    Args:
-        config_path (Path): The refine config.
-        sample (str): Sample name.
-        method (str, optional): Single-method route instead of the combined run.
-        dry_run (bool): Build the seeds and stop before training.
-        force (bool): Re-run even when outputs exist.
-        allow_stale (bool): Proceed despite a stale gate hash.
-        do_propose_only (bool): Write the grouping proposal and stop.
-        force_groups (bool): Rebuild the grouping.
-
-    Returns:
-        int: Process exit status.
+    Arguments mirror the CLI flags below.
     """
     config = load_config(Path(config_path))
     errors = check(REFINE_CONFIG, config, Path(config_path).name)
@@ -155,10 +134,7 @@ def main(config_path, sample=None, method=None, dry_run=False, force=False,
     root = find_root_dir()
     annotation_dir, output_dir, log_dir = _resolve_paths(cfg, root)
 
-    # One log file per run, in its own logs/refine/ subdirectory -- see
-    # shared.utils.pipeline_log_path for why (every stage now shares this
-    # convention) and batch_scripts/run_refine.sh's
-    # logs/refine-<jobid>.out/.err for the matching SLURM-side naming.
+    # One log file per run under logs/refine/; see shared.utils.pipeline_log_path.
     log_file = pipeline_log_path('refine', log_dir=log_dir)
     logger = setup_logger(name='AnnotationLogging', log_file=log_file, level=logging.INFO)
     logger.info('[REFINE] Starting (log: %s)', log_file)
@@ -192,10 +168,8 @@ def main(config_path, sample=None, method=None, dry_run=False, force=False,
                 ontology_file=cfg.get('ontology_file'),
                 ontology_extensions=_ontology_extensions(cfg),
                 allow_stale=allow_stale,
-                # --force means retrain. Otherwise a model already on disk for
-                # this exact (sample, run, model) is loaded instead of refitted:
-                # the integrator's own skip is gated on the registry, which refine
-                # deliberately opts out of via persist=False.
+                # --force retrains; otherwise models on disk are reused
+                # (see RefineRun._reuse_model).
                 reuse_models=not force)
 
             run.prepare()
@@ -230,20 +204,12 @@ def main(config_path, sample=None, method=None, dry_run=False, force=False,
 def seeds_for(cfg: dict, target: dict) -> dict:
     """
     The `seeds` block for one target: the global block, with the target's own
-    `seeds` keys laid over it.
+    `seeds` keys laid over it. Returns a new dict; neither input is modified.
 
-    Added 2026-09-14 so a chapter can state a per-target seeding rule in the
-    config rather than in two config files: chapter 3's Arabidopsis target
-    needs `quantile_scope: geneset` (a review group that unites a nuclei and a
-    protoplast cluster) while the same scope over-seeds the Medicago root hair
-    group, whose members include a cluster with no root-hair evidence.
-
-    Args:
-        cfg (dict): The `RefineConfigs` block.
-        target (dict): One entry of `cfg['targets']`.
-
-    Returns:
-        dict: Merged seeds settings (a new dict; neither input is modified).
+    The right seeding rule can differ between targets in one config:
+    `quantile_scope: geneset` suits a review group that unites a nuclei and a
+    protoplast cluster, but over-seeds a group whose members include a cluster
+    with no evidence for that cell type.
     """
     merged = dict(cfg.get('seeds') or {})
     merged.update(target.get('seeds') or {})

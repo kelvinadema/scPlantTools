@@ -2,21 +2,19 @@
 """
 Stage 3 -- one UMAP per trained model, not just scANVI's.
 
-A refine run fits up to four latents and, until this module existed, embedded
-exactly one of them:
+A refine run fits up to four latents:
 
     SCVI/                the base fit that seeds scANVI, untuned
-    SCANVI/              the deliverable -- the only one that got a UMAP
+    SCANVI/              the deliverable
     SCVI_scibtuned/      optional comparison arm, scib-tuned
     JointEmbeddingSCVI/  optional comparison arm, scib-tuned
 
 The arms exist to be *compared* against the deliverable, and the comparison a
 person actually makes is visual: does this latent separate the same populations,
 and does it still mix the batches. Training curves and the batch-mixing table
-answer neither. So the same neighbours/UMAP/Leiden computation
-(`shared.dimred.DimReducer`) and the same figures (`shared.dimred.UMAPPlotter`)
-that `RefineRun._embed` has always run on the scANVI latent are run here per
-model, into that model's own directory.
+answer neither. So the neighbours/UMAP/Leiden computation
+(`shared.dimred.DimReducer`) and the figures (`shared.dimred.UMAPPlotter`) used
+for the scANVI latent are run per model, into that model's own directory.
 
 Every UMAP is keyed by the LATENT it came from, never by the run alone:
 
@@ -25,11 +23,10 @@ Every UMAP is keyed by the LATENT it came from, never by the run alone:
     X_scVItuned_{run}   -> .obsm['X_umap_scVItuned_{run}'],    SCVI_scibtuned/
     X_jointSCVI_{run}   -> .obsm['X_umap_jointSCVI_{run}'],    JointEmbeddingSCVI/
 
-scANVI keeps the bare `{run}` suffix it has always had, because that key is the
-deliverable and is already referenced by the report, by `inject_refine_labels`
-and by anything downstream that reads a finished run. The three new keys carry
-the latent's own name for the reason `model_dir` exists at all: a figure or an
-embedding that names only the run identifies no model.
+scANVI keeps the bare `{run}` suffix because that key is the deliverable and is
+referenced by the report, by `inject_refine_labels` and by anything downstream
+that reads a finished run. The other keys carry the latent's own name, because a
+figure or an embedding that names only the run identifies no model.
 
 The colourings are the ones `_predict` already wrote (seed, seed support,
 annotation, confidence, flag) plus the batch key, so the four panels are
@@ -83,25 +80,16 @@ MODEL_LATENTS = (
 )
 
 #: Everything except the deliverable. `RefineRun._embed` embeds SCANVI
-#: unconditionally and these only when asked, so that turning the option off
-#: returns the stage to exactly what it did before.
+#: unconditionally and these only when asked, so turning the option off leaves
+#: the deliverable's embedding unchanged.
 COMPARISON_MODELS = tuple(s[0] for s in MODEL_LATENTS if s[0] != 'SCANVI')
 
 
 def latent_specs(run, models=None):
-    """Resolve the templates above for one run.
+    """Resolve the templates above for one run, whether or not each latent exists.
 
-    Args:
-        run (str): The run name -- 'combined' for the normal route.
-        models (list[str], optional): Subset of model directory names, in
-            `MODEL_LATENTS` order regardless of the order given. Defaults to
-            all four.
-
-    Returns:
-        list[LatentSpec]: The specs, whether or not the latent exists.
-
-    Raises:
-        ValueError: If a name is not one of the four models a run can fit.
+    `models` (default all four) is a subset of model directory names; the result
+    is always in `MODEL_LATENTS` order. Raises ValueError for an unknown name.
     """
     known = {s[0] for s in MODEL_LATENTS}
     wanted = set(known if models is None else models)
@@ -114,19 +102,10 @@ def latent_specs(run, models=None):
 
 
 def color_columns(adata, run, batch_key=None):
-    """The `.obs` columns every model's UMAP is coloured by.
+    """The `.obs` columns every model's UMAP is coloured by, in drawing order.
 
-    The same list `RefineRun._embed` has always used for scANVI. Holding it
-    identical across models is the point: a panel that differs in colouring is
-    not a comparison of manifolds.
-
-    Args:
-        adata (AnnData): The object being plotted.
-        run (str): The run name.
-        batch_key (str, optional): The batch column, appended when present.
-
-    Returns:
-        list[str]: Column names present in `.obs`, in drawing order.
+    Identical across models on purpose: a panel that differs in colouring is not
+    a comparison of manifolds. Columns absent from `.obs` are skipped.
     """
     cols = ['seed_{}'.format(run), 'seed_support_{}'.format(run),
             'annotation_{}'.format(run), 'confidence_{}'.format(run),
@@ -140,27 +119,13 @@ def embed_one(adata, spec, sample, run, out_dir, cfg=None, batch_key=None,
               do_leiden=True, log=None):
     """Neighbours + UMAP + Leiden on one latent, then that model's figures.
 
-    Args:
-        adata (AnnData): Carries the latent in `.obsm`; mutated in place with
-            the resulting neighbours graph, UMAP and Leiden clustering.
-        spec (LatentSpec): Which latent, which directory, which key suffix.
-        sample (str): Sample name; the figure filename prefix.
-        run (str): Run name. Passed rather than parsed back out of `spec.key`:
-            the colour columns are named after the RUN and a run name may itself
-            contain an underscore.
-        out_dir (Path): The run directory -- figures go to `out_dir/spec.subdir`.
-        cfg (dict, optional): The `embedding:` config block.
-        batch_key (str, optional): Batch column to colour by.
-        do_leiden (bool): Cluster on the same graph the UMAP came from.
-        log (logging.Logger, optional): Defaults to the module logger.
+    Mutates `adata` in place; figures go to `out_dir/spec.subdir`. Returns
+    `DimReducer.compute`'s result plus 'subdir' and 'latent'. `run` is passed
+    rather than parsed out of `spec.key`, because the colour columns are named
+    after the run and a run name may contain an underscore.
 
-    Returns:
-        dict: `DimReducer.compute`'s result, plus 'subdir' and 'latent'.
-
-    Raises:
-        KeyError: If the latent is not in `.obsm`. Callers that iterate over
-            models should check with `spec.latent in adata.obsm` first -- a
-            missing arm is a disabled arm, not a fault.
+    Raises KeyError if the latent is not in `.obsm`; callers iterating over
+    models check first, since a missing arm is a disabled arm, not a fault.
     """
     log = log or logger
     cfg = dict(cfg or {})
@@ -204,24 +169,10 @@ def embed_models(adata, sample, run, out_dir, models=None, cfg=None,
 
     Per model, collect-and-continue: an embedding that fails (a latent scanpy
     chokes on, a figure backend fault) must not cost the models after it. These
-    are independent comparisons, and the deliverable's own UMAP is normally the
-    first one done.
+    are independent comparisons.
 
-    Args:
-        adata (AnnData): The run's object.
-        sample (str): Sample name.
-        run (str): Run name.
-        out_dir (Path): The run directory.
-        models (list[str], optional): Subset of model directory names.
-        cfg (dict, optional): The `embedding:` config block.
-        batch_key (str, optional): Batch column to colour by.
-        do_leiden (bool): Cluster on each model's own graph.
-        log (logging.Logger, optional): Defaults to the module logger.
-        record (dict, optional): Mutated with one entry per model, for the run
-            record.
-
-    Returns:
-        dict: {model dir name: DimReducer result}, only for models that ran.
+    `record`, if given, gets one entry per model for the run record. Returns
+    {model dir name: DimReducer result} for the models that ran.
     """
     log = log or logger
     results = {}
@@ -260,13 +211,6 @@ def load_obs_obsm(h5ad_path, log=None):
     `sc.tl.umap` and `sc.tl.leiden` all work on unchanged, because every one of
     them reads the representation out of `.obsm` and then only ever touches the
     neighbour graph.
-
-    Args:
-        h5ad_path (Path): The run's h5ad.
-        log (logging.Logger, optional): Defaults to the module logger.
-
-    Returns:
-        AnnData: Cells x 0, carrying the full `.obs` and `.obsm`.
     """
     import anndata as ad
     import h5py
@@ -292,16 +236,7 @@ def write_coords(adata, result, sample, out_dir, log=None):
     Why a sidecar and not the h5ad: see the module docstring. This file is what
     makes a backfilled UMAP reusable (re-plot it, colour it by something else,
     join it to the labels TSV on barcode) without re-running the embedding.
-
-    Args:
-        adata (AnnData): The embedded object.
-        result (dict): One `embed_one` result.
-        sample (str): Sample name.
-        out_dir (Path): The run directory.
-        log (logging.Logger, optional): Defaults to the module logger.
-
-    Returns:
-        Path: The file written.
+    Returns the path written.
     """
     log = log or logger
     embedding = np.asarray(adata.obsm[result['umap_key']])
@@ -322,21 +257,9 @@ def backfill(sample, run, out_dir, h5ad=None, models=None, cfg=None, batch_key=N
              do_leiden=True, log=None):
     """Generate the missing UMAPs for a run that has already been written.
 
-    Args:
-        sample (str): Sample name.
-        run (str): Run name.
-        out_dir (Path): The refine output root -- `out_dir/sample/run` is the
-            run directory.
-        h5ad (Path, optional): The run's h5ad; defaults to the one the run wrote.
-        models (list[str], optional): Which models. Defaults to the three
-            comparison latents -- scANVI already has its figures.
-        cfg (dict, optional): The `embedding:` config block.
-        batch_key (str, optional): Batch column to colour by.
-        do_leiden (bool): Cluster on each model's own graph.
-        log (logging.Logger, optional): Defaults to the module logger.
-
-    Returns:
-        dict: {model dir name: result}, as `embed_models`.
+    `out_dir` is the refine output root (the run directory is
+    `out_dir/sample/run`). `models` defaults to the three comparison latents,
+    since scANVI already has its figures. Returns the results as `embed_models`.
     """
     log = log or logger
     run_dir = Path(out_dir) / sample / run
@@ -370,11 +293,7 @@ def _cli_config(args):
     figure comparable to the one the run produced: same n_neighbors, same
     metric, same min_dist, same seed, same batch key.
 
-    Args:
-        args (argparse.Namespace): Parsed arguments.
-
-    Returns:
-        tuple: (embedding cfg dict, output_dir Path, batch_key str or None).
+    Returns (embedding cfg, output_dir, batch_key).
     """
     from shared.utils import find_root_dir, load_config
 
