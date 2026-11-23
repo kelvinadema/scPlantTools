@@ -63,9 +63,3 @@ python -m sc test
 - [Integration](docs/setup-integration.md) and [annotation](docs/setup-annotation.md)
 - [Testing](docs/testing.md) and [batch scripts](batch_scripts/README.md)
 - The [documentation index](docs/README.md), which also links the design notes in `docs/decisions/`
-
-## Licence and data
-
-A licence for this code has not yet been chosen. Bundled third-party material and its origin are listed in [docs/third-party.md](docs/third-party.md).
-
-Raw data, reference indices, results and compiled tools are not part of this repository.
