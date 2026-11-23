@@ -6,11 +6,9 @@ Run `python -m sc` with no arguments for the command list.
 WHAT THIS IS. A dispatcher, not a workflow engine. It does two things the bare
 `python -m <stage>.main` invocations cannot:
 
-  1. Activates the right conda environment. Five stages, five mutually
-     incompatible environments, and until now the mapping from stage to env
-     lived only inside `batch_scripts/*.sh` -- so running a stage by hand meant
-     knowing which env from memory, and getting it wrong failed on an import
-     hundreds of lines in.
+  1. Activates the right conda environment. The stages need mutually
+     incompatible environments, and running one in the wrong env fails on an
+     import hundreds of lines in.
 
   2. Reports state (`sc status`), by reading the manifests, `.done` flags and
      registry the stages already write.
@@ -52,15 +50,9 @@ def _repo_root() -> Path:
 
 
 def _run_stage(command: str, passthrough: list, dry_run: bool = False) -> int:
-    """Dispatch one stage into its conda env via `conda run`.
+    """Dispatch one stage into its conda env via `conda run`; returns its exit status.
 
-    Args:
-        command (str): Stage name.
-        passthrough (list[str]): Arguments forwarded untouched.
-        dry_run (bool): Print the command instead of running it.
-
-    Returns:
-        int: The stage's exit status.
+    `passthrough` is forwarded untouched; `dry_run` prints the command instead.
     """
     module, env = STAGE_ENVS[command]
     root = _repo_root()
@@ -90,14 +82,9 @@ def _run_stage(command: str, passthrough: list, dry_run: bool = False) -> int:
 # ---------------------------------------------------------------------------
 
 def _load_pipeline_cfg(root: Path, config: str):
-    """Read pipeline_config.yaml from the repo root.
+    """Read the pipeline config (relative paths resolve against `root`).
 
-    Args:
-        root (Path): Repo root.
-        config (Path, optional): Explicit config path.
-
-    Returns:
-        dict: The parsed config.
+    Returns (parsed config, resolved path); the config is {} if the file is missing.
     """
     import yaml
     path = Path(config)
@@ -109,26 +96,12 @@ def _load_pipeline_cfg(root: Path, config: str):
 
 
 def _tick(ok: bool) -> str:
-    """A check or cross glyph for a boolean.
-
-    Args:
-        ok (bool): The state.
-
-    Returns:
-        str: The glyph.
-    """
+    """'x' for True, '.' for False."""
     return 'x' if ok else '.'
 
 
 def cmd_status(args) -> int:
-    """Print the sample x step matrix, or one sample's or target's detail.
-
-    Args:
-        args (argparse.Namespace): Parsed arguments.
-
-    Returns:
-        int: Process exit status.
-    """
+    """Print the sample x step matrix, one sample's detail, or the integration targets."""
     sys.path.insert(0, str(_repo_root()))
     from shared.status import (mapping_status, integration_status,
                                simple_stage_status, MAPPING_STEPS)
@@ -249,11 +222,7 @@ TEST_SUITES = [
 def cmd_test(args) -> int:
     """Run each test directory in the conda env that stage needs.
 
-    Args:
-        args (argparse.Namespace): Parsed arguments.
-
-    Returns:
-        int: 0 when every suite passed, else 1.
+    Returns 0 when every selected suite passed, 1 otherwise, 2 for an unknown suite.
     """
     root = _repo_root()
     suites = [s for s in TEST_SUITES if s[0] != 'site']
@@ -287,7 +256,7 @@ def cmd_test(args) -> int:
 
         print('\n=== tests/{}  (env: {}) ==='.format(name, env or CURRENT_ENV()), file=sys.stderr)
         code = subprocess.call(argv, cwd=str(root))
-        # Required suites must actually collect tests.
+        # pytest exits 5 when it collects no tests, so an empty suite fails here.
         ok = 'pass' if code == 0 else 'FAIL'
         worst = worst if code == 0 else 1
         results.append((name, env, ok, code))
@@ -302,18 +271,14 @@ def cmd_test(args) -> int:
 
 
 def CURRENT_ENV():
-    """The conda env this process is running in, or '' if none."""
+    """The conda env this process is running in, or '<none>'."""
     return os.environ.get('CONDA_DEFAULT_ENV', '<none>')
 
 
 # ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
-    """The `sc` argument parser.
-
-    Returns:
-        argparse.ArgumentParser: The parser.
-    """
+    """The `sc` argument parser."""
     p = argparse.ArgumentParser(
         prog='python -m sc',
         description='Front-end for the scRNAseq pipeline. Activates each stage\'s conda '
@@ -352,14 +317,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
-    """CLI entry point: resolve the stage to its env and dispatch.
-
-    Args:
-        argv (list[str], optional): Argument vector.
-
-    Returns:
-        int: Process exit status.
-    """
+    """CLI entry point: resolve the stage to its env and dispatch; returns the exit status."""
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ('-h', '--help'):
         build_parser().print_help()
