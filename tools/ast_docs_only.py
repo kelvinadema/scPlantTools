@@ -16,12 +16,15 @@ Limitations:
   and is flagged.
 - Docstrings that are read at runtime (`description=__doc__`, `help()`,
   `inspect.getsource` in tests) are NOT protected; find those consumers by hand.
-- Untracked new files and non-.py changes are listed, not checked.
+- Untracked or newly added files and non-.py changes are listed, not checked.
+- Directives are matched where a comment starts with `noqa`, `type:` or
+  `pragma`; a directive later in a comment is treated as prose.
 - Uses the running interpreter's parser; run it with the Python the code
   targets (3.12).
 """
 
 import ast
+import re
 import subprocess
 import sys
 
@@ -42,9 +45,12 @@ def code_dump(source, name):
                     include_attributes=False)
 
 
+DIRECTIVE = re.compile(r'#\s*(?:noqa\b|type:|pragma\b).*')
+
+
 def directives(source):
-    return sorted(line.split('#', 1)[1].strip() for line in source.splitlines()
-                  if '#' in line and any(k in line for k in ('noqa', 'type:', 'pragma')))
+    return sorted(m.group(0) for line in source.splitlines()
+                  for m in [DIRECTIVE.search(line)] if m)
 
 
 def git(root, *args):
@@ -69,7 +75,11 @@ def main(argv):
             print(f'FAIL  {path} (deleted)')
             failures += 1
             continue
-        old = git(root, 'show', f'{rev}:{path}')
+        try:
+            old = git(root, 'show', f'{rev}:{path}')
+        except subprocess.CalledProcessError:
+            print(f'NOT CHECKED  {path} (added since {rev})')
+            continue
         same_code = code_dump(old, path) == code_dump(new, path)
         same_directives = directives(old) == directives(new)
         ok = same_code and same_directives
