@@ -79,9 +79,6 @@ def module_supports_covariates() -> bool:
     Probed rather than hardcoded so a future scvi-tools that implements them starts
     working here with no edit. As of scvi-tools 1.5.0.post1 the answer is no and the
     failure is silent -- see docs/decisions/contrastive-sweep.md.
-
-    Returns:
-        bool: True if the module signature accepts covariate dimensions.
     """
     try:
         module_cls = ContrastiveVI._module_cls
@@ -145,14 +142,8 @@ class ContrastiveIntegrator:
 
         Raises rather than warns on an empty or overlapping side: an overlapping sample
         would land in both index vectors, which trains without error and silently
-        destroys the contrast.
-
-        Returns:
-            tuple: (background_indices (list[int]), target_indices (list[int])).
-
-        Raises:
-            KeyError: If `.obs` has no 'sample' column.
-            ValueError: If the sides overlap, name an absent sample, or one is empty.
+        destroys the contrast. Also raises on a missing 'sample' column or a named
+        sample absent from the AnnData. Returns (background_indices, target_indices).
         """
         if 'sample' not in self.adata.obs:
             raise KeyError(
@@ -211,9 +202,6 @@ class ContrastiveIntegrator:
         categorical = [k for k in self.covariates.get('categorical') or []]
         continuous = [k for k in self.covariates.get('continuous') or []]
 
-        # Dropped rather than forwarded when the module cannot read them:
-        # forwarding would have setup_args record a correction that never
-        # happened. See docs/decisions/contrastive-sweep.md.
         if not module_supports_covariates():
             dropped = list(categorical) + list(continuous)
             if dropped:
@@ -258,11 +246,7 @@ class ContrastiveIntegrator:
     # ------------------------------------------------------------------
 
     def integrate(self):
-        """Train (or reload) this contrast and return the annotated AnnData.
-
-        Returns:
-            AnnData: The object, with both latents in `.obsm`.
-        """
+        """Train (or reload) this contrast; returns the AnnData with both latents in `.obsm`."""
         entry = self.registry.find_entry(self.target) if self.persist else None
         if not self.overwrite and entry and 'model_path' in entry and Path(entry['model_path']).exists():
             adata_path = Path(entry.get('anndata_path', ''))
@@ -300,9 +284,6 @@ class ContrastiveIntegrator:
 
         The latents are attached before the `persist` gate: a disposable grid fit still
         needs them, since scoring it is the entire point.
-
-        Args:
-            model (ContrastiveVI): The trained model.
         """
         # Both, under keys sharing the `X_contrastiveVI` prefix so
         # _dispatch_reduction UMAPs each. Reading either alone is a mistake: the
@@ -356,18 +337,9 @@ def contrast_separation_score(adata, logger=None, out_dir=None, target=None):
     against degenerate fits, not evidence that the salient axis is biological --
     see docs/decisions/contrastive-sweep.md.
 
-    Args:
-        adata (AnnData): A fitted contrast, carrying both latents and GROUP_KEY.
-        logger (logging.Logger, optional): Defaults to 'IntegrateLogging'.
-        out_dir (Path, optional): If given with `target`, writes a TSV here.
-        target (str, optional): Target name, for the log line and the TSV.
-
-    Returns:
-        dict: 'ilisi_salient', 'ilisi_background', and 'separation' = background
-            minus salient, in [-1, 1]. At or below 0 the fit is degenerate.
-
-    Raises:
-        KeyError: If `.obs` has no contrast-group column.
+    Returns 'ilisi_salient', 'ilisi_background' and 'separation' = background
+    minus salient, in [-1, 1]; at or below 0 the fit is degenerate. With both
+    `out_dir` and `target`, also writes `{target}_contrast_separation.tsv`.
     """
     from .diagnostics import batch_mixing_metrics
 
@@ -406,8 +378,8 @@ def contrast_separation_score(adata, logger=None, out_dir=None, target=None):
 
 
 # Shared by `contrast_leakage_score` and `select_contrast_grid` so a bare call
-# to the scorer measures the same thing the sweep does. Defaulting them to None
-# silently gave a direct caller NaN for the two metrics that matter most.
+# to the scorer measures the same thing the sweep does; None would give a
+# direct caller NaN for the two metrics that matter most.
 DEFAULT_IDENTITY_KEY = 'leiden_scVI'
 DEFAULT_QC_KEYS = ('mitochondrial_fraction_corrected_counts',
                    'chloroplast_fraction_corrected_counts',
@@ -429,14 +401,8 @@ def contrast_leakage_score(adata, identity_key: str = DEFAULT_IDENTITY_KEY,
     cells received no perturbation, so any structure in their salient coordinates is
     leakage by construction. See docs/decisions/contrastive-sweep.md.
 
-    Args:
-        adata (AnnData): A fitted contrast.
-        identity_key (str): `.obs` column holding cell identity to test against.
-        qc_keys (tuple[str]): `.obs` columns to correlate salient dimensions with.
-        n_clusters (int): k for the k-means partition of the salient space.
-        n_permutations (int): Draws for the NMI null.
-        seed (int): RNG seed.
-        logger (logging.Logger, optional): Defaults to 'IntegrateLogging'.
+    `n_clusters` is k for the k-means partition of the salient space;
+    `n_permutations` draws form the NMI null.
 
     Returns:
         dict: 'leakage_nmi', 'leakage_ratio' (salient vs background NMI -- the
@@ -541,40 +507,22 @@ def select_contrast_grid(adata, background_samples, target_samples, target, grid
 
     This is what replaces autotuning; every criterion is computed OUTSIDE the
     objective, because contrastiveVI's own objective rewards the degenerate fit.
-    Each point is trained as a disposable fit -- nothing is written to disk and the
-    target's registry entry is never touched -- so the chosen parameters go into the
-    config by hand and the recorded model is always one a human selected. See
-    docs/decisions/contrastive-sweep.md.
+    Each point is a disposable fit on a copy of `adata` -- nothing is written to
+    disk and the target's registry entry is never touched. Choosing is separate:
+    the `sweep: true` orchestrator path trains `best_grid_point`'s choice and
+    records it in the registry; otherwise the parameters go into the config by
+    hand. See docs/decisions/contrastive-sweep.md.
 
-    Args:
-        adata (AnnData): The whole contrast. Each point is fitted on a copy.
-        background_samples (list[str]): Control side.
-        target_samples (list[str]): Perturbed side.
-        target (str): Target name.
-        grid (list[dict]): `model_params` overrides, one per point.
-        covariates (dict, optional): Passed through; usually dropped by `_prep`.
-        batch_key (str, optional): The one nuisance slot this model has.
-        layer (str): Counts layer.
-        train_args (dict, optional): kwargs for `model.train()`.
-        base_model_params (dict, optional): Architecture the winner will be trained
-            with. Not optional in practice -- see the decisions doc.
-        identity_key (str): Passed to `contrast_leakage_score`.
-        qc_keys (tuple[str]): Passed to `contrast_leakage_score`.
-        out_dir (Path, optional): Where `{target}_contrast_grid.tsv` is written.
-        logger (logging.Logger, optional): Defaults to 'IntegrateLogging'.
-        append (bool): Accumulate onto an existing table rather than overwrite it.
-            Repeated points are replication, not waste.
-        seeds (tuple[int]): One fit per point per seed.
-
-    Returns:
-        pandas.DataFrame: The ranked results, one row per (point, seed).
+    `grid` is a list of `model_params` overrides. `base_model_params` (the
+    architecture the winner will be trained with) is not optional in practice.
+    `append` accumulates onto an existing `{target}_contrast_grid.tsv` in
+    `out_dir`, since repeated points are replication. Returns the ranked
+    results, one row per (point, seed).
     """
     logger = logger or logging.getLogger('IntegrateLogging')
     covariates = covariates or {'categorical': [], 'continuous': []}
-    # One fit per point per seed. Unseeded, leakage_ratio carries enough
-    # fit-to-fit variance to reorder the grid, so replicates make the spread
-    # visible and let best_grid_point take a median instead of a lucky fit.
-    # See docs/decisions/contrastive-sweep.md.
+    # One fit per point per seed, so best_grid_point can take a median across
+    # replicates instead of a lucky fit.
     seeds = tuple(seeds) if seeds else (0,)
     jobs = [(point, seed) for point in grid for seed in seeds]
 
@@ -650,12 +598,7 @@ def rank_contrast_grid(df: pd.DataFrame) -> pd.DataFrame:
     `quality = separation - leakage_ratio`. Collapsed points are kept, not dropped --
     they are the evidence that the penalty range was too high. `quality` is a
     convenience, not an authority. See docs/decisions/contrastive-sweep.md.
-
-    Args:
-        df (pandas.DataFrame): Grid rows, as built by `select_contrast_grid`.
-
-    Returns:
-        pandas.DataFrame: A copy, sorted, with 'quality' and 'collapsed' present.
+    Returns a sorted copy with 'quality' and 'collapsed' present.
     """
     if df.empty:
         return df
@@ -682,13 +625,6 @@ def best_grid_point(df: pd.DataFrame, param_keys=('wasserstein_penalty', 'n_sali
     counts as collapsed if the majority of its replicates collapsed. Returns None
     when every point collapsed rather than handing back the least bad one: that grid
     has not answered the question it was asked.
-
-    Args:
-        df (pandas.DataFrame): Grid rows, possibly with replicates.
-        param_keys (tuple[str]): Columns forming the parameter combination.
-
-    Returns:
-        dict or None: `model_params` overrides for the winning point.
     """
     if df is None or df.empty:
         return None
@@ -721,13 +657,6 @@ def summarise_contrast_grid(df: pd.DataFrame,
     two points differ by more than the noise. `quality_range` is the column to read
     before believing any ranking: where it is wider than the gap between the top
     rows, the grid has not distinguished them.
-
-    Args:
-        df (pandas.DataFrame): Grid rows.
-        param_keys (tuple[str]): Columns forming the parameter combination.
-
-    Returns:
-        pandas.DataFrame: One row per combination, with medians, ranges and `n`.
     """
     if df is None or df.empty:
         return df

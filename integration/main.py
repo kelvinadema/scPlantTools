@@ -22,9 +22,7 @@ one.
 
 If --name already exists, the entry owns the model: drop the conflicting --set
 to replay it as written, edit the YAML to change it, or pick a new --name. A
-disagreement is refused, not warned about. Five flags used to be accepted here
-and silently ignored in favour of the config, which meant `--target X --tune`
-looked like it enabled tuning and did not -- a warning in a SLURM log nobody
+disagreement is refused, not warned about: a warning in a SLURM log nobody
 reads is not a safeguard.
 """
 
@@ -103,11 +101,8 @@ def _check_no_conflicts(name, config, overrides, cli_samples, resolved_samples, 
 
     Compared against the *resolved* target (defaults applied, groups expanded),
     so `--sample p1 p2` against `Samples: ['tip']` is compared as nine samples
-    rather than one group name.
-
-    Raising rather than warning is the point of this rewrite: the old code
-    logged the conflict and used the config's value, so the flag appeared to
-    take effect and did not.
+    rather than one group name. Raises rather than warns, so a flag can never
+    appear to take effect while the config's value is used.
     """
     resolved = resolve_target(config, name)
     conflicts = []
@@ -133,9 +128,8 @@ def _new_scvi_entry(samples, overrides: dict, file_defaults: dict) -> dict:
 
     Whatever `--set` does not state is deliberately left out of the entry, so it
     falls through to the file's own `defaults:` block exactly as a hand-written
-    target would. The previous version always wrote explicit tune/do_hvg/
-    model_class, which meant a CLI-created entry silently bypassed `defaults:` --
-    omitting --tune wrote `tune: False` into a file whose defaults say True.
+    target would; writing explicit tune/do_hvg/model_class would silently
+    bypass `defaults:`.
     """
     entry = {'Samples': list(samples), 'method': 'scVI'}
     entry.update(overrides)
@@ -151,19 +145,7 @@ def _new_scvi_entry(samples, overrides: dict, file_defaults: dict) -> dict:
 
 
 def _new_scarches_entry(reference, query, icfg, scfg, overrides, logger) -> dict:
-    """Build a scArches target entry from --reference/--query on the CLI.
-
-    Args:
-        reference (str): Reference target name.
-        query (list[str]): Query sample names.
-        icfg (dict): The integration config.
-        scfg (Path): The sample sheet.
-        overrides (dict): `--set` overrides.
-        logger (logging.Logger): Where the notes go.
-
-    Returns:
-        dict: The new target entry.
-    """
+    """Build a scArches target entry from --reference/--query on the CLI."""
     cache = CacheUtils()
     ref_entry = cache.find_entry(reference)
     if ref_entry is None:
@@ -238,33 +220,19 @@ def _resolve_run_name(args, icfg, scfg, logger):
 
 def _enable_tf32(logger) -> None:
     """
-    Let float32 matmuls use TF32 tensor cores.
+    Let float32 matmuls use TF32 tensor cores (Ampere+ GPUs).
 
-    PyTorch defaults `float32_matmul_precision` to 'highest', which runs every
-    float32 matmul in true FP32 and leaves the tensor cores idle. The GPUs this
-    stage runs on (L40S, Ada/sm_89, and any Ampere+) implement TF32 in hardware:
-    same 8-bit exponent, mantissa truncated to 10 bits, accumulation still in
-    FP32. On a matmul-bound model -- which an encoder/decoder over ~31k genes
-    very much is -- 'high' is typically a 1.5-2x throughput win for free.
+    PyTorch's default 'highest' precision leaves the tensor cores idle; 'high'
+    is typically a 1.5-2x throughput win on these matmul-bound models. TF32
+    applies only to matmul/conv inputs -- reductions, the NB/ZINB likelihood,
+    the KL term and the optimiser stay FP32 -- so this is not mixed-precision
+    training. The cost is bitwise reproducibility against a run made without
+    it, which the asynchronous ASHA autotune does not offer anyway.
 
-    Why this is safe here and where it would not be. TF32 applies ONLY to
-    matmul/conv inputs; reductions, the NB/ZINB likelihood, the KL term and the
-    optimiser all stay FP32, so this is not mixed-precision training and there
-    is no loss-scaling or overflow exposure. What it does cost is bitwise
-    reproducibility against a run made without it -- which for an autotune whose
-    ASHA scheduler is already asynchronous and explicitly documented as
-    non-reproducible across GPU counts (see run_ch5_integrations.sh) is not a
-    property this stage had to begin with.
-
-    Set INTEGRATION_TF32=0 to opt out -- e.g. when deliberately reproducing an
-    older fit's numerics rather than training a new one.
-
-    Called once at the entrypoint, following the same convention as
-    setup_logger: it is a process-global torch setting, so a per-model call
-    site would be both redundant and harder to find. Deliberately NOT applied
-    in doublet_model.py, the other entrypoint into this env -- those are small
-    disposable per-sample models where the runtime is not the constraint, and
-    their calls feed a hard filtering decision.
+    Set INTEGRATION_TF32=0 to opt out, e.g. to reproduce an older fit's
+    numerics. Process-global, so called once at the entrypoint. Deliberately
+    not applied in doublet_model.py: small per-sample models whose calls feed a
+    hard filtering decision.
     """
     if os.environ.get('INTEGRATION_TF32', '1') == '0':
         logger.info('[MAIN] INTEGRATION_TF32=0; leaving float32 matmul precision at torch default.')
@@ -286,23 +254,12 @@ def _enable_tf32(logger) -> None:
 def main(icfg, scfg, args) -> int:
     """CLI entry point: resolve the requested targets and run each.
 
-    Args:
-        icfg (Path): integration_config.yaml.
-        scfg (Path): The sample sheet.
-        args (argparse.Namespace): Parsed CLI arguments.
-
-    Returns:
-        int: Process exit status.
+    Returns the number of failed targets (1 if the ad hoc entry cannot be resolved).
     """
-    # One log file per run, in its own logs/integration/ subdirectory -- see
-    # shared.utils.pipeline_log_path for why (every stage now shares this
-    # convention) and batch_scripts/run_integration.sh's
-    # logs/integration-<jobid>.out/.err for the matching SLURM-side naming.
+    # One log file per run under logs/integration/; see shared.utils.pipeline_log_path.
     log_file = pipeline_log_path('integration', log_dir=find_root_dir() / 'logs')
-    # The only place setup_logger is called for 'IntegrateLogging' -- every
-    # IntegrationManager just fetches this already-configured logger via
-    # logging.getLogger(), per setup_logger's own "call once at the
-    # entrypoint" convention.
+    # The only setup_logger call for 'IntegrateLogging'; every
+    # IntegrationManager fetches this logger with logging.getLogger().
     logger = setup_logger(name='IntegrateLogging', log_file=log_file, level=logging.INFO)
     _enable_tf32(logger)
 
@@ -326,12 +283,9 @@ def main(icfg, scfg, args) -> int:
                                              overwrite=args.overwrite, force=args.force,
                                              artifact_fallback=args.artifact_fallback)
             adata = integrator.run()
-            # Overwrite the h5ad already written mid-run with this fully final
-            # version (it now also carries the UMAP/leiden columns _dispatch_reduction
-            # adds after that earlier save) at the same path the model itself
-            # lives at -- looked up from the registry rather than recomputing a
-            # path formula that must independently agree with integrate.py's/
-            # refmapping.py's own folder-naming logic.
+            # Overwrite the h5ad written mid-run with the final version (now with
+            # the UMAP/leiden keys), at the model's own path as recorded in the
+            # registry rather than a recomputed path formula.
             entry = CacheUtils().find_entry(name)
             out_dir = Path(entry['model_path']) if entry and entry.get('model_path') else (
                 find_root_dir() / "results/integration/scVI" / name)
@@ -351,12 +305,7 @@ def main(icfg, scfg, args) -> int:
 
 
 def write_anndata_metadata(adata, outfile="metadata.tsv"):
-    """Write a per-target metadata TSV beside the h5ad.
-
-    Args:
-        adata (AnnData): The integrated object.
-        outfile (Path): Where to write.
-    """
+    """Write `.obs` plus every `.obsm` embedding (one column per dimension) as a TSV."""
     metadata = adata.obs.copy()
     for key in adata.obsm:
         arr = adata.obsm[key]
@@ -391,20 +340,11 @@ if __name__ == '__main__':
 
     # Model parameters are NOT flags. They live in the target entry, and --set
     # is the one way to state them -- when creating that entry, and only then.
-    # --tune/--model-class/--do-hvg/--n-trials/--covariates/--artifact-key and
-    # --samples-override are all gone; see this module's docstring. The
-    # replacement for --samples-override is `--sample S1 S2 --name NEW`, which
-    # writes an entry and is therefore reproducible.
     parser.add_argument('--set', dest='set_', action='append', metavar='KEY=VALUE', default=None,
                          help='Set a key on a NEW --sample/--reference entry, e.g. '
                               '--set tune=true --set n_trials=200. Repeatable. Values use YAML '
                               'syntax. Settable keys: {}'.format(', '.join(sorted(SETTABLE_KEYS))))
 
-    # --run-solo was removed: doublet detection moved into the mapping stage as
-    # a per-sample step. `.obs['solo_doublet']` arrives with the mapping
-    # artifact; see mapping/doublets.py and solo.mode in
-    # filter_config.yaml.
-    #
     # --artifact-fallback stays a flag rather than a config key on purpose: it
     # is a permission ("I accept a model trained on mixed filtering"), not a
     # parameter, and the default is to refuse.
@@ -413,8 +353,6 @@ if __name__ == '__main__':
                               'Off by default: silently mixing manually- and auto-filtered '
                               'samples trains a quietly different model.')
 
-    # 'pca' was accepted here and silently did nothing -- _dispatch_reduction
-    # has no branch for it. Only what is implemented is offered.
     parser.add_argument('--dimred', type=str, choices=['umap'], default='umap',
                          help='Dimensionality reduction to compute after integration')
     parser.add_argument('--plot', action='store_true', help='Generate dimred and metric plots after integration')

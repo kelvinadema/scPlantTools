@@ -25,7 +25,7 @@ reference AnnData or the reference side silently comes back short.
 Usage:
     python -m integration.register_reference \\
         --name       MtPartA_TipSZmock_refine_scanvi \\
-        --model-dir  results/refine/MtPartA_TipSZmock_DRVI/combined/scanvi \\
+        --model-dir  results/refine/MtPartA_TipSZmock_DRVI/combined/SCANVI \\
         --anndata    results/refine/MtPartA_TipSZmock_DRVI/combined/MtPartA_TipSZmock_DRVI_combined.h5ad \\
         --model-class SCANVI \\
         --reference-samples p1 p2 p3 rep1 rep2 rep3 rep4 BDTip2mm BDTip10mm pMock BDMock SMu008

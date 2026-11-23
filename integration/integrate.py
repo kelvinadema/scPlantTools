@@ -58,13 +58,8 @@ _BASE_SPACE = {
     "gene_likelihood": ["zinb", "nb"],
 }
 
-# The normalization / covariate-encoding pins, which are NOT shared and sat in
-# _BASE_SPACE incorrectly until 2026-08-17.
-#
-# They used to read `use_layer_norm: both`, `use_batch_norm: none`,
-# `encode_covariates: True`, described as "DRVIModule's own defaults". The
-# description was accurate; the placement was not. _BASE_SPACE is inherited by
-# every class, so DRVI's convention was silently imposed on the other two.
+# The normalization / covariate-encoding pins are NOT shared: each class's
+# constructor has its own defaults, and _BASE_SPACE is inherited by every class.
 # Measured against the actual constructors:
 #
 #   class               use_batch_norm  use_layer_norm  encode_covariates
@@ -72,17 +67,14 @@ _BASE_SPACE = {
 #   DRVIModule          none            both            not accepted (**kwargs)
 #   JointEmbeddingVAE   not accepted    not accepted    not accepted (**kwargs)
 #
-# So plain SCVI was built with scvi's own normalization inverted and covariate
-# encoding switched on -- three modelling decisions never chosen for it, and
-# PINNED, so no search could revisit them. Nothing has used `model_class: SCVI`
-# yet, which is why it went unnoticed.
+# So the pins are split per class and set only where the constructor consumes
+# them. JointEmbeddingSCVI gets none: its module discards them through **kwargs.
 #
-# Split per class so a value is only set where the constructor consumes it.
-# NOTHING ALREADY FITTED CHANGES: DRVI keeps exactly the values it had, and
-# JointEmbeddingSCVI stops being handed three keys its module discards through
-# **kwargs -- never applied, but they WERE recorded in resolved_model_params,
-# so 42 registry entries claim settings that had no effect. Only SCVI's values
-# change, and only for fits made from here on.
+# Provenance of existing fits: before this split (2026-08-17) every class was
+# given DRVI's three pins. DRVI fits are unaffected. JointEmbeddingSCVI registry
+# entries from then record the three keys in resolved_model_params although
+# they were never applied. Only tuned SCVI fits made from the split on use
+# scvi's own defaults.
 _SCVI_NORM_PINS = {
     "use_batch_norm": ["both"],
     "use_layer_norm": ["none"],
@@ -93,22 +85,20 @@ _DRVI_NORM_PINS = {
     "use_layer_norm": ["both"],
     "use_batch_norm": ["none"],
     # DRVIModule takes this via **kwargs rather than by name. Kept anyway:
-    # dropping it would change what resolved_model_params records for the 18
-    # DRVI entries already in the registry, and a search-space edit is not the
-    # place to silently rewrite their provenance.
+    # dropping it would change what resolved_model_params records for the DRVI
+    # fits already in the registry, and a search-space edit is not the place to
+    # silently rewrite their provenance.
     "encode_covariates": [True],
 }
 
 # Per model class: the base space plus that class's own overrides, so the keys
 # every scVI-shaped model shares are stated once. The DRVI and
-# JointEmbeddingSCVI ranges were narrowed on 2026-08-04 against the fits
-# already in the tune registry -- the evidence, key by key, is in
-# docs/decisions/autotune-search-spaces.md.
+# JointEmbeddingSCVI ranges were narrowed against earlier tuned fits -- the
+# evidence, key by key, is in docs/decisions/autotune-search-spaces.md.
 _SEARCH_SPACE_DEFAULTS = {
-    # The registry still holds no TUNED plain-SCVI fit, so the searched ranges
-    # are the scvi-tools documented space, unrevised. The three pins are not:
-    # they are scvi's own constructor defaults, corrected 2026-08-17 -- see
-    # _SCVI_NORM_PINS.
+    # No tuned plain-SCVI fit exists to revise against, so the searched ranges
+    # are the scvi-tools documented space. The three pins are scvi's own
+    # constructor defaults -- see _SCVI_NORM_PINS.
     "SCVI": {**_BASE_SPACE, **_SCVI_NORM_PINS},
 
     # No normalization pins: JointEmbeddingVAE accepts none of the three and
@@ -219,18 +209,9 @@ def stack_layers(adata, layers, suffixes=FEATURE_SUFFIXES):
     carries `gene` and `source_layer` so a feature maps back to its gene, and
     `.obs` is copied unchanged so batch/covariate columns register as usual.
 
-    Args:
-        adata (AnnData): Gene-space object carrying both layers.
-        layers (list[str]): Exactly two distinct layer names.
-        suffixes (tuple[str, str]): Feature-name suffixes per layer.
-
-    Returns:
-        AnnData: The feature object, with the stacked matrix in `.X` and in
-            `.layers[TWO_LAYER_INPUT]` and the derivation in `.uns['labelspace']`.
-
-    Raises:
-        ValueError: If not exactly two distinct layers are given.
-        KeyError: If a layer is absent.
+    The stacked matrix is in `.X` and in `.layers[TWO_LAYER_INPUT]`, the
+    derivation in `.uns['labelspace']`. Raises ValueError unless exactly two
+    distinct layers are given, KeyError if one is absent.
     """
     layers = list(layers)
     if len(layers) != 2 or layers[0] == layers[1]:
@@ -254,22 +235,11 @@ def stack_layers(adata, layers, suffixes=FEATURE_SUFFIXES):
 
 
 def exclude_genes_from(adata, genes, feature_gene_column=None):
-    """A copy of `adata` without the listed genes.
+    """(copy of `adata` without the listed genes, number of features removed).
 
     On a gene-space object the match is on `var_names`; on a two-layer feature
     object pass `feature_gene_column='gene'` so BOTH features of a listed gene go.
-
-    Args:
-        adata (AnnData): The object to subset.
-        genes (Iterable[str]): Gene ids to remove.
-        feature_gene_column (str, optional): `.var` column holding the gene id
-            per feature.
-
-    Returns:
-        tuple: (subset AnnData, number of features removed).
-
-    Raises:
-        ValueError: If nothing would remain.
+    Raises ValueError if nothing would remain.
     """
     genes = set(genes)
     if feature_gene_column:
@@ -286,13 +256,10 @@ def exclude_genes_from(adata, genes, feature_gene_column=None):
 def mark_trained_features(full, trained_on, two_layer=None, excluded=None) -> None:
     """Stamp which genes the model actually trained on into `full.var`, in place.
 
-    Args:
-        full (AnnData): The gene-space object being saved.
-        trained_on (Iterable[str]): The training object's `var_names` (gene ids,
-            or suffixed feature names on the two-layer path).
-        two_layer (dict, optional): The `.uns['labelspace']` record from
-            `stack_layers`; None on the single-layer path.
-        excluded (Iterable[str], optional): The `exclude_genes` ids, if any.
+    `full` is the gene-space object being saved; `trained_on` is the training
+    object's `var_names` (gene ids, or suffixed feature names on the two-layer
+    path, where `two_layer` is the `.uns['labelspace']` record from
+    `stack_layers`). `excluded` is the `exclude_genes` ids, if any.
     """
     trained = pd.Index(list(trained_on))
     if two_layer is None:
@@ -316,12 +283,6 @@ def _looks_like_counts(matrix) -> bool:
     The test for "has this layer already been normalized". Deliberately a
     property of the DATA rather than of the layer's name: a target may point at
     any layer, and `corrected_counts` is integral while `lognorm_cp10k` is not.
-
-    Args:
-        matrix: A dense array or scipy sparse matrix.
-
-    Returns:
-        bool: Whether the values are consistent with raw counts.
     """
     data = matrix.data if hasattr(matrix, 'data') else np.asarray(matrix).ravel()
     data = np.asarray(data)
@@ -340,16 +301,9 @@ _SAMPLERS = ('choice', 'uniform', 'quniform', 'loguniform', 'qloguniform',
 def _to_sampler(key: str, spec):
     """One search-space value, as written in code or YAML, to a ray sampler.
 
-    Args:
-        key (str): Parameter name, used only in the error messages.
-        spec (list | tuple | dict): A list of values, or a single-key mapping
-            naming a sampler in `_SAMPLERS` with its arguments.
-
-    Returns:
-        ray.tune.sample.Domain: The sampler.
-
-    Raises:
-        ValueError: If `spec` is an empty list or not a recognised form.
+    `spec` is a list of values or a single-key mapping naming a sampler in
+    `_SAMPLERS` with its arguments; `key` is used only in error messages.
+    Raises ValueError for an empty list or an unrecognised form.
     """
     if isinstance(spec, (list, tuple)):
         if len(spec) == 0:
@@ -380,20 +334,11 @@ def resolve_search_space(model_class: str, overrides: dict = None, logger=None) 
 
     A target's own `search_space:` is merged over the built-in defaults per key.
     See docs/decisions/autotune-search-spaces.md for the value grammar and how the
-    defaults were chosen.
+    defaults were chosen. In `overrides`, `None` as a value drops that key
+    entirely, leaving scvi its own default; a 1-element list pins the parameter.
 
-    Args:
-        model_class (str): Key into `_SEARCH_SPACE_DEFAULTS`.
-        overrides (dict, optional): A target's `search_space:` block. `None` as a
-            value drops that key entirely, leaving scvi its own default; a
-            1-element list pins the parameter.
-        logger (logging.Logger, optional): Defaults to 'IntegrateLogging'.
-
-    Returns:
-        dict: {parameter name: ray sampler}.
-
-    Raises:
-        ValueError: If `model_class` has no default space.
+    Returns {parameter name: ray sampler}. Raises ValueError if `model_class` has
+    no default space.
     """
     log = logger if logger is not None else logging.getLogger('IntegrateLogging')
     if model_class not in _SEARCH_SPACE_DEFAULTS:
@@ -438,18 +383,9 @@ def normalize_kl_warmup(train_kwargs: dict, n_obs: int, logger=None) -> dict:
     `refmapping._map_query_ref` trains through the same `model.train()` path and
     needs the same guarantee. See docs/decisions/kl-warmup.md.
 
-    Args:
-        train_kwargs (dict): kwargs for `model.train()`, optionally carrying a
-            `plan_kwargs` block.
-        n_obs (int): Cell count, for scvi's max-epochs heuristic.
-        logger (logging.Logger, optional): Defaults to 'SingleCellMappingPipeline'.
-
-    Returns:
-        dict: A copy of `train_kwargs`, with `plan_kwargs['n_epochs_kl_warmup']`
-            set or clamped where needed.
-
-    Raises:
-        ValueError: If `n_epochs_kl_warmup` is a string other than "auto".
+    Returns a copy of `train_kwargs`; the input is not modified. The default
+    logger is 'SingleCellMappingPipeline'. Raises ValueError if
+    `n_epochs_kl_warmup` is a string other than "auto".
     """
     log = logger if logger is not None else logging.getLogger('SingleCellMappingPipeline')
     kwargs = dict(train_kwargs)
@@ -543,22 +479,17 @@ class SingleCellIntegrate:
         # mode='min' would select the WORST trial and report no error at all.
         self.tune_mode = tune_mode or ('min' if self.tune_metric == 'elbo_validation' else 'max')
         self.model_args = model_args
-        # SVD SOLVER FOR THE scib PATH, and 'randomized' rather than scvi's
-        # 'arpack' default because arpack demonstrably fails on this data.
-        #
-        # A scib-scored tune builds a PCA per trial. scvi passes this straight
-        # to scib_metrics.Benchmarker, whose own docstring says the choice is
-        # there because it "can help stability issues" -- and on job 42083220,
-        # tuning SCVI against `Total` on the 147k-cell nuclei reference, ALL 12
-        # trials died with:
+        # SVD solver for the scib path: 'randomized' rather than scvi's 'arpack'
+        # default. A scib-scored tune builds a PCA per trial (scvi passes this
+        # to scib_metrics.Benchmarker), and arpack, an iterative Lanczos solver,
+        # fails outright when its start vector lands in a null space -- which a
+        # latent with a collapsed or rank-deficient dimension produces:
         #
         #     ArpackError: ARPACK error -9: Starting vector is zero
         #
-        # arpack is an iterative Lanczos solver and fails outright when its
-        # start vector lands in a null space, which a latent with a collapsed or
-        # rank-deficient dimension will produce. 'randomized' is a direct
-        # randomized SVD with no such failure mode. Only reachable when
-        # tune_metric selects the scib path; the elbo path never builds a PCA.
+        # Observed killing every trial of a scib-scored SCVI tune. 'randomized'
+        # has no such failure mode. Only reachable when tune_metric selects the
+        # scib path; the elbo path never builds a PCA.
         self.tune_solver = tune_solver
         self.train_args = dict(train_args or {})
         # Normalized once, up front, so the search space built below and the
@@ -585,8 +516,8 @@ class SingleCellIntegrate:
         self.resolved_model_params = None
 
         # Label-space inputs (docs/decisions/two-layer-label-spaces.md). The
-        # HVG aggregation key defaults to per-`batch`, as select_hvg always did;
-        # the exclusion list is applied after concatenation and before HVG.
+        # HVG aggregation key defaults to per-`batch`; the exclusion list is
+        # applied after concatenation and before HVG.
         self.hvg_batch_key = hvg_batch_key or 'batch'
         self.exclude_genes = set(exclude_genes) if exclude_genes else None
         # Filled by _stack_training_layers on the two-layer path: the gene-space
@@ -603,8 +534,7 @@ class SingleCellIntegrate:
         report the validation metric, and `lr` is added because the documented scvi
         space tunes it; a config-pinned `lr` in `plan_kwargs` still wins.
 
-        Returns:
-            dict: {'model_params': {...}, 'train_params': {...}}.
+        Returns {'model_params': {...}, 'train_params': {...}}.
         """
         base = resolve_search_space(self.model_class, self.search_space_cfg, self.logger)
 
@@ -620,15 +550,8 @@ class SingleCellIntegrate:
         return space
 
     def _normalize_kl_warmup(self, train_kwargs: dict, n_obs: int) -> dict:
-        """Instance wrapper over the module-level `normalize_kl_warmup`.
-
-        Args:
-            train_kwargs (dict): kwargs for `model.train()`.
-            n_obs (int): Cell count.
-
-        Returns:
-            dict: The normalized kwargs.
-        """
+        """`normalize_kl_warmup`, except for `_NO_KL_WARMUP_CLASSES`, whose warmup
+        keys are removed from `plan_kwargs` instead."""
         if self.model_class in _NO_KL_WARMUP_CLASSES:
             kwargs = dict(train_kwargs or {})
             plan = dict(kwargs.get('plan_kwargs') or {})
@@ -659,11 +582,8 @@ class SingleCellIntegrate:
     def _stack_training_layers(self, layers: list) -> str:
         """Swap `self.adata` for its two-layer feature object; return the layer to train on.
 
-        Args:
-            layers (list[str]): The two layer names, in (spliced, unspliced) order.
-
-        Returns:
-            str: `TWO_LAYER_INPUT`, the layer `_prep_scvi` copies into `.X`.
+        `layers` is in (spliced, unspliced) order. Returns `TWO_LAYER_INPUT`, the
+        layer `_prep_scvi` copies into `.X`.
         """
         self._gene_space_adata = self.adata
         self.adata = stack_layers(self.adata, layers)
@@ -686,13 +606,7 @@ class SingleCellIntegrate:
         on the scale its likelihood assumes.
 
         Called after HVG selection, so the derived layer carries the final var
-        set rather than being subset afterwards.
-
-        Args:
-            counts_layer (str): The layer the target named, or None for `.X`.
-
-        Returns:
-            str: The layer name to hand `setup_anndata`, or None for `.X`.
+        set rather than being subset afterwards. None means `.X`, in and out.
         """
         source = self.adata.layers[counts_layer] if counts_layer is not None else self.adata.X
         if not _looks_like_counts(source):
@@ -745,18 +659,7 @@ class SingleCellIntegrate:
         """Select HVGs if asked, then register this target's fields with the model class.
 
         Every declared key must be present in `.obs` -- a missing one raises rather
-        than being dropped. See docs/decisions/integration-required-keys.md.
-
-        Args:
-            batch_key (str): `.obs` batch column, or None.
-            counts_layer (str, optional): Layer copied into `.X` before setup.
-            categorical_covariates (list, optional): `.obs` column names.
-            continuous_covariates (list, optional): `.obs` column names.
-            hvg (bool): Whether to subset to HVGs and register the file.
-            labels_key (str, optional): `.obs` labels column.
-
-        Raises:
-            KeyError: If any declared key is absent from `.obs`.
+        than being dropped (KeyError). See docs/decisions/integration-required-keys.md.
         """
         categorical_covariates = [] if categorical_covariates is None else categorical_covariates
         continuous_covariates = [] if continuous_covariates is None else continuous_covariates
@@ -809,8 +712,8 @@ class SingleCellIntegrate:
         if hvg:
             hvg_path = self.out_dir / '{}_HVG.tsv'.format(self.target)
             # The aggregation key for the per-batch rankings -- per library by
-            # default, exactly as before; the model's own batch_key is
-            # registered further down and is a separate choice.
+            # default; the model's own batch_key is registered further down and
+            # is a separate choice.
             self.adata = HVGSelector(self.adata, hvg_path).select_hvg(batch_key=self.hvg_batch_key)
             self._update_registry(self.target, {'hvg_path': str(hvg_path)})
 
@@ -870,21 +773,7 @@ class SingleCellIntegrate:
 
         Returns a registry-cached model without training when one exists and
         `overwrite` is False. A disposable run (`persist=False`) never consults or
-        writes the registry.
-
-        Args:
-            batch_key (str): `.obs` batch column, or None.
-            integration_name (str): Registry key to look this target up under.
-            layer (str, optional): Counts layer.
-            model_args (dict, optional): Fixed hyperparameters, used only when
-                `tune` is False.
-            do_hvg (bool): Whether to subset to HVGs.
-            tune (bool): Whether to run autotune instead of using `model_args`.
-            save (bool): Whether to write the model, h5ad and registry entry.
-            labels_key (str, optional): `.obs` labels column.
-
-        Returns:
-            scvi.model.base.BaseModelClass: The trained or loaded model.
+        writes the registry. `model_args` is used only when `tune` is False.
         """
         # A disposable run must not resolve to some previously-registered model
         # that happens to share this name.
@@ -946,13 +835,6 @@ class SingleCellIntegrate:
         -- `lr` above all -- survive. `plan_kwargs` is deep-merged so a tuned `lr` and
         a configured `n_epochs_kl_warmup` coexist rather than one clobbering the other.
         On a tune=False run this collapses to exactly `self.train_args`.
-
-        Args:
-            tuned_train_params (dict): `train_params` from the winning trial's config,
-                or None.
-
-        Returns:
-            dict: kwargs for `model.train()`.
         """
         merged = dict(tuned_train_params or {})
         for key, value in self.train_args.items():
@@ -972,18 +854,8 @@ class SingleCellIntegrate:
         hyperparameters when no trial reports the metric; see
         docs/decisions/autotune-failure-diagnosis.md and autotune-ray-runtime.md.
 
-        Args:
-            search_space (dict): As built by `_build_search_space`.
-            n_trials (int): ray `num_samples`.
-            metric (str): Metric to select on.
-            mode (str, optional): 'min' or 'max'. Defaults to `self.tune_mode`.
-            seed (int): Searcher seed.
-
-        Returns:
-            dict: The winning trial's config, with 'model_params' and 'train_params'.
-
-        Raises:
-            RuntimeError: If no trial reported `metric`.
+        Returns the winning trial's config ('model_params' and 'train_params').
+        Raises RuntimeError if no trial reported `metric`.
         """
         mode = mode or self.tune_mode
         opt_config = None if self.overwrite else self._load_tuned_model(model_name = self.target)
@@ -1068,10 +940,6 @@ class SingleCellIntegrate:
         and logs one representative of each with a pointer at the likely cause.
         Best-effort: it runs on the failure path and must not raise. See
         docs/decisions/autotune-failure-diagnosis.md.
-
-        Args:
-            results (ray.tune.ResultGrid): The finished trials.
-            metric (str): The metric that was being selected on.
         """
         try:
             errored, no_metric, nan_metric = [], [], []
@@ -1132,20 +1000,13 @@ class SingleCellIntegrate:
         CUDA_VISIBLE_DEVICES, so it cannot disagree with what ray sees. SLURM's own
         variables are consulted only for CPUs, where no equivalent runtime probe
         exists -- `os.cpu_count()` reports the whole node. See
-        docs/decisions/autotune-ray-runtime.md.
-
-        Returns:
-            dict: {'cpu': int, 'gpu': int} for the whole allocation.
+        docs/decisions/autotune-ray-runtime.md. Returns {'cpu': int, 'gpu': int}.
         """
         cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 0)) or (os.cpu_count() or 1)
         return {"cpu": int(cpus), "gpu": int(torch.cuda.device_count())}
 
     def _get_allocated_resources(self):
-        """Per-trial slice of what `_cluster_resources` reports.
-
-        Returns:
-            dict: {'cpu': int, 'gpu': int} per trial.
-        """
+        """Per-trial slice of what `_cluster_resources` reports: {'cpu': int, 'gpu': int}."""
         cluster = self._cluster_resources()
         cpus, gpus = cluster["cpu"], cluster["gpu"]
         trial_cpus = max(1, cpus // gpus) if gpus > 0 else max(1, cpus // 2)
@@ -1158,26 +1019,15 @@ class SingleCellIntegrate:
         This is the registry write that would otherwise fire even with
         save=False, since tuning records its optimum independently of the model
         save. See docs/decisions/autotune-failure-diagnosis.md.
-
-        Args:
-            cfg (dict): The winning trial's config.
         """
         if not self.persist:
             self.logger.info('[INTEGRATION] persist=False: not recording tuned parameters in the registry')
             return
-        # Upsert, not add_entry: a blind append here was the root cause of
-        # duplicate registry entries.
+        # Upsert, not add_entry: a blind append creates duplicate registry entries.
         self._update_registry(self.target, {"samples": self.adata.obs["sample"].unique().tolist(), "optimal_model": cfg})
 
     def _load_tuned_model(self, model_name: str):
-        """The tuned config recorded for `model_name`, or False if there is none.
-
-        Args:
-            model_name (str): Registry key.
-
-        Returns:
-            dict or bool: The stored `optimal_model` config, else False.
-        """
+        """The `optimal_model` config recorded for `model_name`, or False if there is none."""
         entry = self.registry.find_entry(model_name)
         if entry:
             self.logger.info(f'Found entry for model: {model_name}, Attempting to load tuned parameters...')
@@ -1189,22 +1039,11 @@ class SingleCellIntegrate:
         return False
 
     def _update_registry(self, integration_name: str, updates: dict):
-        """Upsert this target's registry entry.
-
-        Args:
-            integration_name (str): Registry key.
-            updates (dict): Fields to merge into the entry.
-        """
+        """Upsert this target's registry entry."""
         self.registry.upsert_entry(integration_name, updates)
 
     def _update_save_anndata(self, model, save_dir: str, method = 'scVI'):
-        """Write the latent into `.obsm` and save the AnnData beside the model.
-
-        Args:
-            model: The trained model.
-            save_dir (Path): Directory to write `{target}.h5ad` into.
-            method (str): Names the obsm key, `X_{method}`.
-        """
+        """Write the latent into `.obsm['X_{method}']` and save `{target}.h5ad` beside the model."""
         latent = model.get_latent_representation()
         save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1223,17 +1062,11 @@ class SingleCellIntegrate:
             self.adata.obsm['X_DRVI'] = latent
 
         # THE SAVED OBJECT CARRIES EVERY GENE, even when the model trained on
-        # HVGs. Until 2026-08-18 do_hvg replaced self.adata with the 2,000-gene
-        # subset and that subset was what got written, so markerid -- which
-        # reads this file -- could only ever nominate a marker from those 2,000.
-        # Measured on MtSZ_sysvi_labels: 3.8% of Medicago's gene space reachable,
-        # and any canonical marker outside the HVG set unreachable regardless of
-        # how diagnostic it was.
-        #
-        # The two questions are separate and now answered separately: HVGs are
-        # what the LATENT is learned from, the full set is what genes are SCORED
-        # on. markerid applies its own detection floor (min_cells=10,
-        # markerid/markers.py) so nothing undetected leaks through.
+        # HVGs. HVGs are what the LATENT is learned from; the full set is what
+        # genes are SCORED on. markerid reads this file, so saving only the HVG
+        # subset would make any canonical marker outside it unreachable however
+        # diagnostic it was. markerid applies its own detection floor
+        # (min_cells=10, markerid/markers.py) so nothing undetected leaks through.
         #
         # `hvg` is recorded in .var so a consumer can recover the training
         # subset, and the latent is per-cell so it transfers unchanged -- the
@@ -1241,7 +1074,7 @@ class SingleCellIntegrate:
         out = self.adata
         # The two-layer path writes back onto the GENE-SPACE object (the stacked
         # feature object is training input only); otherwise onto the pre-HVG /
-        # pre-exclusion snapshot, exactly as before.
+        # pre-exclusion snapshot.
         full = self._gene_space_adata if self._gene_space_adata is not None else \
             getattr(self, '_full_gene_adata', None)
         if full is not None and full.n_obs == self.adata.n_obs:

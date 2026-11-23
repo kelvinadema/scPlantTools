@@ -89,11 +89,7 @@ def matrix_bytes(g) -> int:
 
 
 def report(name: str) -> None:
-    """Print what slimming one target would save.
-
-    Args:
-        name (str): Target name.
-    """
+    """Print what slimming one target would save."""
     src = src_path(name)
     with h5py.File(src, 'r') as f:
         kept = matrix_bytes(f['X'])
@@ -130,14 +126,7 @@ def report(name: str) -> None:
 
 
 def slim(name: str) -> None:
-    """Write a target's h5ad with only what the annotation stage reads.
-
-    Args:
-        name (str): Target name.
-
-    Returns:
-        Path: The slimmed file.
-    """
+    """Write a target's h5ad with only what the annotation stage reads."""
     src, dst = src_path(name), dst_path(name)
     tmp = dst.with_suffix('.h5ad.partial')
     if tmp.exists():
@@ -167,11 +156,7 @@ def slim(name: str) -> None:
 
 
 def main() -> None:
-    """CLI entry point: report on or slim the named targets.
-
-    Returns:
-        int: Process exit status.
-    """
+    """CLI entry point: report on or slim the named targets."""
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = ap.add_mutually_exclusive_group(required=True)

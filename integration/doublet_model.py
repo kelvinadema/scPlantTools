@@ -13,10 +13,8 @@ and `shared/` already run under this interpreter on every integration run, so
 importing them here is safe -- importing anything from `mapping/` would
 not be.
 
-It reuses `SingleCellIntegrate` rather than re-implementing scVI setup. The
-earlier standalone worker duplicated that logic on a rationale ("import nothing
-from this repo") that was stricter than the real constraint, and duplicated code
-is how the two drift apart.
+It reuses `SingleCellIntegrate` rather than re-implementing scVI setup, so the
+two cannot drift apart.
 
 Contract with the caller, deliberately narrow:
 
@@ -27,11 +25,10 @@ Contract with the caller, deliberately narrow:
          umap2, leiden
 
 The model is **disposable**: `persist=False` means nothing is written to disk and
-nothing touches `scvi_tune_registry.json` (originally because it had no file
-locking and 40 samples registering models in one mapping run would race; it is
-locked as of 2026-07-28, but a model deleted at the end of the sample still does
-not belong in a registry that exists to locate artifacts). Its parameters go
-back to the caller in the JSON summary and end up in `.uns['qc']['solo']`.
+nothing touches `scvi_tune_registry.json` -- a model deleted at the end of the
+sample does not belong in a registry that exists to locate artifacts. Its
+parameters go back to the caller in the JSON summary and end up in
+`.uns['qc']['solo']`.
 
 **No covariates, ever.** `SOLO.from_scvi_model` raises on a source model
 carrying any registered categorical or continuous covariate. That is a
@@ -86,10 +83,7 @@ def main() -> int:
     """Worker entry point: train a throwaway model and write doublet calls.
 
     Runs in the integration env as a subprocess of the mapping stage, because
-    scvi-tools cannot be installed alongside it.
-
-    Returns:
-        int: Process exit status.
+    scvi-tools cannot be installed alongside it. Returns the exit status.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--input', required=True, help='h5ad with counts in .X')
@@ -174,11 +168,7 @@ def main() -> int:
                 'n_hidden': args.n_hidden,
                 'n_layers': args.n_layers}},
             # train_args (max_epochs + plan_kwargs.n_epochs_kl_warmup) is built
-            # just above. It was the route missing on both sides of this boundary:
-            # --max-epochs used to be parsed, echoed into the JSON summary below
-            # and recorded in .uns['qc']['solo']['max_epochs'] by the caller, but
-            # never reached model.train(). The integration side gets the same from
-            # a target's max_epochs:/plan_kwargs:.
+            # just above, so --max-epochs actually reaches model.train().
             train_args=(train_args or None),
             persist=False,
             out_dir=scratch)
@@ -210,13 +200,11 @@ def main() -> int:
         # Embedding from the same latent space, so the report's scVI UMAP and
         # the doublet calls describe one model rather than two. Routed through
         # the shared DimReducer (the same code that builds the mapping stage's
-        # PCA UMAP, X_umap_qc) so this embedding uses the *same* neighbours/
-        # UMAP/Leiden settings by construction: n_neighbors = round(sqrt(N)),
-        # cosine metric, min_dist = 0.0. Before this it used scanpy's bare
-        # defaults (n_neighbors=15, euclidean, min_dist=0.5), which spread the
-        # cells out and made the scVI UMAP look blobbier than the latent
-        # warranted -- an apples-to-oranges comparison with the crisp PCA UMAP.
-        # leiden_kwargs preserves the previous igraph flavour exactly.
+        # PCA UMAP, X_umap_qc) so the two UMAPs are comparable: n_neighbors =
+        # round(sqrt(N)), cosine metric, min_dist = 0.0. scanpy's bare defaults
+        # (n_neighbors=15, euclidean, min_dist=0.5) spread the cells out and
+        # make the scVI UMAP look blobbier than the latent warrants.
+        # leiden_kwargs pins the igraph flavour earlier runs clustered with.
         if 'X_scVI' not in adata.obsm:
             adata.obsm['X_scVI'] = model.get_latent_representation()
         with warnings.catch_warnings():

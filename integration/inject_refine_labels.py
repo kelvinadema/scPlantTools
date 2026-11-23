@@ -228,13 +228,7 @@ def build_columns(keys: pd.Index, labels: pd.DataFrame) -> dict[str, np.ndarray]
 
 
 def _write_categorical(obs: h5py.Group, name: str, values: np.ndarray) -> None:
-    """Write a categorical obs column into an open h5ad.
-
-    Args:
-        obs: The h5py obs group.
-        name (str): Column name.
-        values (list[str]): Values.
-    """
+    """Write a categorical obs column into an open h5ad."""
     cats = pd.Index(sorted(set(values.tolist())))
     codes = cats.get_indexer(values)
     dtype = np.int8 if len(cats) <= 127 else np.int32
@@ -252,28 +246,14 @@ def _write_categorical(obs: h5py.Group, name: str, values: np.ndarray) -> None:
 
 
 def _write_numeric(obs: h5py.Group, name: str, values: np.ndarray) -> None:
-    """Write a numeric obs column into an open h5ad.
-
-    Args:
-        obs: The h5py obs group.
-        name (str): Column name.
-        values: Numeric values.
-    """
+    """Write a numeric obs column into an open h5ad."""
     d = obs.create_dataset(name, data=values.astype('float64'))
     d.attrs['encoding-type'] = 'array'
     d.attrs['encoding-version'] = '0.2.0'
 
 
 def inject(path: Path, columns: dict[str, np.ndarray]) -> None:
-    """Copy a refine run's label columns into an existing h5ad.
-
-    Args:
-        path (Path): The h5ad to write into.
-        columns (dict): Column name to values.
-
-    Returns:
-        list[str]: The columns written.
-    """
+    """Copy a refine run's label columns into an existing h5ad."""
     numeric = {dst for _, dst, kind in CARRIED if kind == 'num'}
     with h5py.File(path, 'r+') as f:
         obs = f['obs']
@@ -294,11 +274,7 @@ def inject(path: Path, columns: dict[str, np.ndarray]) -> None:
 
 
 def main() -> None:
-    """CLI entry point: inject refine labels into a target's h5ad.
-
-    Returns:
-        int: Process exit status.
-    """
+    """CLI entry point: inject refine labels into a target's h5ad."""
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = ap.add_mutually_exclusive_group(required=True)

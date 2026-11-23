@@ -22,11 +22,10 @@ model, no h5ad, and the target's registry entry is never touched.
 
 The table ACCUMULATES across runs by default, so extending a ladder does not
 re-pay for the points already measured, and re-running a point stores it as a
-replicate rather than overwriting. Replication matters here: an identical re-run
-of 10x_BAP moved `leakage_ratio` from 0.353 to 0.556 while `separation` held at
-0.324 vs 0.343, so leakage carries fit-to-fit variance that a single observation
-hides. `best_grid_point` takes the MEDIAN across replicates for that reason.
-Pass `--fresh` to start a clean table.
+replicate rather than overwriting. Replication matters: `leakage_ratio` carries
+fit-to-fit variance that a single observation hides, so `best_grid_point` takes
+the MEDIAN across replicates (docs/decisions/contrastive-sweep.md). Pass
+`--fresh` to start a clean table.
 
 This script only measures. To have a target choose its own parameters and train
 the winner, set `sweep: true` on it in integration_config.yaml -- the
@@ -98,13 +97,12 @@ DEFAULT_PENALTIES = (0.0, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0)
 #   _PENALTIES_LARGE  subset of _PENALTIES_MID  subset of DEFAULT_PENALTIES
 #
 # What is dropped, and why in this order. 5/10/20 go first: every point at
-# penalty >= 1 collapsed on all five CH5 contrasts in the 2026-08-03 sweep, so
-# the high end is where the least information is -- but 1.0 and 2.0 are KEPT in
-# every ladder, because that measurement was made at n_layers=1 (before the
-# base_model_params fix of 2026-08-04) and the collapse boundary at the depth
-# these targets actually train at is still unmeasured. A ladder that stops below
-# the turnover is the mistake this file has already made twice. 0.05 goes next
-# as the finest sub-1 rung, then 0.1 and 0.5.
+# penalty >= 1 collapsed on all five measured contrasts, so the high end holds
+# the least information -- but 1.0 and 2.0 are KEPT in every ladder, because
+# that measurement was made at n_layers=1 (before base_model_params was passed)
+# and the collapse boundary at the trained depth is still unmeasured. A ladder
+# that stops below the turnover has been the mistake twice. 0.05 goes next as
+# the finest sub-1 rung, then 0.1 and 0.5.
 _PENALTIES_MID = (0.0, 0.1, 0.25, 0.5, 1.0, 2.0)
 _PENALTIES_LARGE = (0.0, 0.25, 1.0, 2.0)
 
@@ -117,13 +115,11 @@ _PENALTIES_LARGE = (0.0, 0.25, 1.0, 2.0)
 _MID_CELLS = 20_000
 _LARGE_CELLS = 80_000
 
-# Both axes are swept. n_salient_latent used to hold at (10,) on the argument
-# that capacity is a second-order question to be revisited after a penalty is
-# chosen -- but the two interact directly (raising salient capacity gives shared
-# variation more room to leak, which is what the penalty is resisting), so a
-# penalty chosen at one capacity does not transfer to another. Three rungs
-# around the published default is the smallest ladder that can show whether it
-# matters.
+# Both axes are swept: capacity and penalty interact directly (more salient
+# capacity gives shared variation more room to leak, which is what the penalty
+# resists), so a penalty chosen at one capacity does not transfer to another.
+# Three rungs around the published default is the smallest ladder that can
+# show whether it matters.
 DEFAULT_SALIENT = (5, 10, 20)
 
 # Three fits per point. Enough to see whether two points differ by more than the
@@ -133,21 +129,11 @@ DEFAULT_SEEDS = (0, 1, 2)
 
 
 def default_penalties(n_obs: int = None) -> tuple:
-    """The penalty ladder for a cohort of `n_obs` cells.
+    """The penalty ladder for a cohort of `n_obs` cells, nested within `DEFAULT_PENALTIES`.
 
-    Sizing the ladder is pipeline logic, not a per-target choice: it follows from
-    the contrast's cell count and the measured per-fit cost, and hand-classifying
-    each target in a chapter config means every chapter re-derives the same rule
-    and gets to disagree with it. A target that genuinely needs a different
-    ladder still says so with `sweep_grid: {wasserstein_penalty: [...]}`, which
-    wins over this.
-
-    Args:
-        n_obs (int, optional): Cells in the contrast. `None` returns the full
-            ladder, which is the right answer when the size is not yet known.
-
-    Returns:
-        tuple[float]: Penalties, nested within `DEFAULT_PENALTIES`.
+    Pipeline logic rather than a per-target choice (see the module docstring); a
+    target's `sweep_grid: {wasserstein_penalty: [...]}` still wins. `None` returns
+    the full ladder, the right answer when the size is not yet known.
     """
     if n_obs is None or n_obs < _MID_CELLS:
         return DEFAULT_PENALTIES
@@ -163,14 +149,7 @@ def build_grid(penalties, salient):
 
 
 def main(argv=None):
-    """CLI entry point: run a contrastiveVI grid for one target.
-
-    Args:
-        argv (list[str], optional): Argument vector.
-
-    Returns:
-        int: Process exit status.
-    """
+    """CLI entry point: run a contrastiveVI grid for one target."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--icfg', required=True, help='Path to integration_config.yaml')
@@ -209,8 +188,9 @@ def main(argv=None):
         parser.error("target '{}' has method '{}'; this sweep is only for contrastiveVI "
                      'targets.'.format(args.target, spec['method']))
 
-    # Same artifact resolution and layer dropping the real run does, so the grid
-    # is fitted on exactly the data the chosen point will later be trained on.
+    # Same artifact resolution and layer dropping as the real run. Unlike the
+    # orchestrator path, min_cells, derive_corrected_layers and batch-key
+    # derivation are not applied here.
     if spec.get('artifact_key'):
         manager.artifact_key = spec['artifact_key']
     manager.keep_layers = spec.get('keep_layers')
@@ -230,15 +210,11 @@ def main(argv=None):
     if args.identity_key:
         kwargs['identity_key'] = args.identity_key
 
-    # The target's own architecture, under every grid point. Fixed 2026-08-04;
-    # this had never been passed by either caller, so the grid fitted at
-    # contrastive._MODEL_DEFAULTS -- `n_layers: 1` -- while every CH5 target
-    # states 2 and is trained at 2. A penalty selected at a depth it is not
-    # applied at is not comparable: depth and wasserstein_penalty both govern
-    # how much shared variation reaches the salient space. Grids written before
-    # this date were measured one layer shallower than the models that used
-    # them, so re-run rather than reuse. Same fix in
-    # orchestrator._sweep_contrast, which is the `sweep: True` path.
+    # The target's own architecture under every grid point: depth and
+    # wasserstein_penalty both govern how much shared variation reaches the
+    # salient space, so a penalty selected at another depth is not comparable.
+    # Grids written before 2026-08-04 were fitted at contrastive._MODEL_DEFAULTS'
+    # n_layers=1; re-run rather than reuse. See docs/decisions/contrastive-sweep.md.
     base_params = (spec.get('model_params') or {}).get('model_params') or {}
 
     df = select_contrast_grid(

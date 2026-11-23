@@ -31,19 +31,7 @@ def embed_into_mapping_report(adata, sample_name: str, mapping_output_dir, sampl
     """Add this integration's UMAP and summary to a sample's mapping report.
 
     Only meaningful for a single-sample target, which is the only case with one
-    natural report to embed into.
-
-    Args:
-        adata (AnnData): The integrated object.
-        sample_name (str): The sample.
-        mapping_output_dir (Path): Mapping results root.
-        sample_metadata_path (Path): The sample sheet.
-        mapper (str): Mapper the sample was run with.
-        method (str): Integration method.
-        model_class (str): Model class used.
-        tuned (bool): Whether the model was autotuned.
-        logger (logging.Logger): Where the progress lines go.
-        force (bool): Re-embed even if the report already carries a section.
+    natural report to embed into. `force` re-embeds even when the done flag exists.
     """
     mapping_paths = get_sample_output_paths(Path(mapping_output_dir) / sample_name, mapper=mapper)
     done_path = mapping_paths['done'] / 'single_sample_integration.done'
@@ -62,23 +50,15 @@ def embed_into_mapping_report(adata, sample_name: str, mapping_output_dir, sampl
         extra_color_by=[c for c in ('batch', 'solo_doublet') if c in adata.obs.columns],
         title_prefix=f"UMAP (X_{method})")
 
-    # The doublet-score histogram is no longer drawn here. Doublet calling moved
-    # into the mapping stage, so `.obs['solo_doublet*']` arrives with the
-    # artifact this run loaded, and qc_plot.py::_plot_solo already renders it in
-    # the sample's own QC section. Plotting it again from here would duplicate a
-    # figure and, worse, imply integration had produced the calls.
+    # No doublet histogram here: the calls come from the mapping stage and
+    # qc_plot.py::_plot_solo already renders them; drawing them again would
+    # imply integration had produced them.
     if 'solo_doublet' in adata.obs:
         doublet_col = adata.obs['solo_doublet']
-        # Don't trust this to still be real bool: an artifact written before
-        # orchestrator.py::_sanitize_obs stopped blanket-stringifying obs
-        # columns can have this column cached on disk as the strings
-        # "True"/"False" (themselves promoted to a pandas Categorical by
-        # write_h5ad's own strings_to_categoricals()) -- on-disk data isn't
-        # retroactively repaired by that fix. `.astype(bool)` would be wrong
-        # here too: the non-empty string "False" is truthy in Python, so it
-        # would silently count every cell as a doublet instead of raising.
-        # Compare against the string form instead, which is correct whether
-        # the column is real bool, object, or a stale Categorical of strings.
+        # Older artifacts can hold this column as "True"/"False" strings (a
+        # Categorical after write_h5ad); see docs/decisions/obs-sanitization.md.
+        # `.astype(bool)` would count the truthy string "False" as a doublet, so
+        # compare the string form, which is right for bool, object or Categorical.
         if isinstance(doublet_col.dtype, pd.CategoricalDtype):
             doublet_col = doublet_col.astype(object)
         n_doublets = int((doublet_col.astype(str) == 'True').sum())
@@ -88,8 +68,7 @@ def embed_into_mapping_report(adata, sample_name: str, mapping_output_dir, sampl
     # figures off disk and cannot otherwise tell a figure produced from the
     # current QC output from one left behind by an integration run that predates
     # it -- the same stale-figure trap qc_plot.py clears its own prefixes to
-    # avoid. Without this the report happily presents months-old scVI results as
-    # current.
+    # avoid.
     parent_hash = ''
     try:
         filtered = mapping_paths['qc'] / '{}_filtered.h5ad'.format(sample_name)

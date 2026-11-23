@@ -15,9 +15,10 @@ from .integrate import normalize_kl_warmup
 class scArchesIntegrator:
     """Map query samples onto a trained reference model by scArches surgery.
 
-    Not SCVI-only: every class in MODEL_CLASSES subclasses SCVI and inherits
-    ArchesMixin unchanged, so the surgery dispatches on the reference's own class
-    and the fine-tuned output is of that same class.
+    Not SCVI-only: every class in MODEL_CLASSES carries ArchesMixin (SysVI
+    without subclassing SCVI; see integrationutils.MODEL_CLASSES), so the surgery
+    dispatches on the reference's own class and the fine-tuned output is of that
+    same class.
     """
     def __init__(self, adata, ref_samples: list, ref_model_path: str, ref_genes_path: list, query_samples: list, output_dir: str, logger, name: str, model_class: str = 'SCVI', top_n_genes = 2000, train_args: dict = None, ref_anndata_path: str = None):
         self.adata = adata
@@ -51,13 +52,9 @@ class scArchesIntegrator:
         self.ref_genes = self._load_hvg_list(ref_genes_path) if ref_genes_path else None
 
     def _split_reference_query(self):
-        """Label each cell reference or query from its sample name.
+        """Split the object into (reference, query) by sample name.
 
-        Returns:
-            tuple: (reference AnnData, query AnnData).
-
-        Raises:
-            ValueError: If a named sample is absent from the loaded object.
+        Raises ValueError if a named sample is absent from the loaded object.
         """
         self.logger.info("[scArches] Assigning reference/query labels based on samples")
         missing_ref = set(self.ref_samples) - set(self.adata.obs["sample"])
@@ -74,9 +71,6 @@ class scArchesIntegrator:
             # query to the reference registry and zero-pads any missing gene --
             # the canonical scArches alignment. The reference AnnData already
             # carries the trained genes, so its intersection is the full list.
-            # (The previous inline version added missing genes as .obs columns
-            # rather than vars, then indexed [:, genes], which KeyErrors on the
-            # still-absent genes.)
             def subset_present(adata, genes):
                 present = [g for g in genes if g in adata.var_names]
                 return adata[:, present].copy()
@@ -88,13 +82,9 @@ class scArchesIntegrator:
         return ref_adata, query_adata
 
     def _load_hvg_list(self, path: str):
-        """Read the reference's HVG list, so the query is subset to the same genes.
+        """The top `top_n` genes of the reference's `_HVG.tsv` by consensus_rank.
 
-        Args:
-            path (str | Path): The reference's `_HVG.tsv`.
-
-        Returns:
-            list[str] or None: Gene names, or None when the file is unusable.
+        Raises ValueError if the file lacks the `gene`/`consensus_rank` columns.
         """
         df = pd.read_csv(path, sep='\t')
         if 'gene' not in df.columns or 'consensus_rank' not in df.columns:
@@ -109,22 +99,14 @@ class scArchesIntegrator:
         Reload the trained reference model.
 
         scvi's `<Model>.load(dir_path, adata=...)` requires `adata` to carry
-        *exactly* the genes the model was registered against at training
-        time. The `adata` this used to be called with (a subset of this
-        run's own concatenated AnnData, i.e. `ref_adata` in `MapReference`)
-        has already been outer-joined against the query's gene set in
-        `_concatenate_adata` -- whenever the query was mapped to a different
-        index than the reference, that pads the reference's own var space up
-        to the ref+query union, which is not what the model was trained on
-        and raises "Number of vars in `adata_target` not the same as
-        source". Reload the reference's own untouched AnnData straight from
-        disk instead -- the query's extra genes never need to touch the
-        reference side at all. (This alone does not preserve those genes in
-        the final output; `_map_query_ref` handles that half, since scArches's
-        own `prepare_query_anndata` is destructive on the query side too.)
-        Falls back to the (potentially padded) passed-in `adata` when no
-        pristine path is available, so this stays working for any caller
-        that does not supply one.
+        *exactly* the genes the model was registered against. The passed-in
+        `ref_adata` has been outer-joined against the query in
+        `_concatenate_adata`, which pads it to the ref+query gene union whenever
+        the two were mapped to different indices ("Number of vars in
+        `adata_target` not the same as source"). So the reference's own
+        untouched AnnData is reloaded from disk; the passed-in `adata` is only
+        the fallback when no such path is configured. Keeping the query's extra
+        genes in the output is `_map_query_ref`'s job.
         """
         self.logger.info(f"[scArches] Loading {self.model_class} reference model from {self.ref_model_path}")
         if self.ref_anndata_path is not None and self.ref_anndata_path.is_file():
@@ -160,10 +142,7 @@ class scArchesIntegrator:
         `labels_key: seed_combined`), which is why this is keyed on the model's
         registry rather than on `model_class == 'SCANVI'`. A reference trained
         with no labels_key registers the synthetic '_scvi_labels' and is skipped.
-
-        Args:
-            query_adata (AnnData): The surgery copy, modified in place.
-            ref_model: The loaded reference model, read for its labels registry.
+        `query_adata` is modified in place.
         """
         from scvi import REGISTRY_KEYS
 
@@ -211,18 +190,9 @@ class scArchesIntegrator:
         silently deleted. `weight_decay=0.0` is the canonical scArches setting, merged
         into the target's own plan_kwargs so the KL warmup survives.
 
-        Args:
-            ref_model: The loaded reference model.
-            ref_adata (AnnData): The reference's own registered object.
-            query_adata (AnnData): The query cells.
-            save (bool): Whether to write the model, h5ad and registry entry.
-
-        Returns:
-            The fine-tuned model.
+        `save` writes the model, the h5ad and the registry entry. Returns
+        (fine-tuned model, full outer-joined AnnData).
         """
-        # prepare_query_anndata is DESTRUCTIVE -- it subsets its argument down
-        # to the reference's registered genes in place. On a copy, so genes the
-        # query has beyond the reference's survive into the saved output.
         query_aligned = query_adata.copy()
         self._blank_query_labels(query_aligned, ref_model)
         self.model_cls.prepare_query_anndata(query_aligned, ref_model)
@@ -262,18 +232,10 @@ class scArchesIntegrator:
             full_adata = ad.concat([ref_adata, query_adata], join="outer")
             latent = np.concatenate([ref_latent, query_latent], axis=0)
             self._update_save_anndata(full_adata, model, save_dir = out_dir, latent = latent)
-            # The registry entry is written last, only once the anndata write
-            # above has actually completed -- writing it earlier (as this used
-            # to, right after model.save()) let a run killed mid-write (SLURM
-            # walltime, OOM) leave a registry entry pointing at a truncated
-            # .h5ad forever, since nothing re-validated it on the next run.
-            # `MapReference`'s reload branch below now also tolerates this if
-            # it happens anyway (e.g. from before this fix), but the ordering
-            # here is what stops a fresh occurrence. Upsert, not add_entry --
-            # a blind append here was the same duplicate-entry bug as
-            # integrate.py's autotune save: an --overwrite rerun of an
-            # existing name would otherwise create a second, orphaned entry
-            # instead of merging into the first.
+            # The registry entry is written last, once the h5ad write has
+            # completed, so a run killed mid-write (walltime, OOM) cannot leave
+            # an entry pointing at a truncated file. Upsert, so an --overwrite
+            # rerun merges into the existing entry instead of adding a second.
             self.registry.upsert_entry(self.name, {
                 'reference_samples': self.ref_samples, 'query_samples': self.query_samples,
                 'reference_model': str(self.ref_model_path), 'model_path': str(out_dir),
@@ -284,22 +246,11 @@ class scArchesIntegrator:
         return model, full_adata
 
     def _update_save_anndata(self, adata, model, save_dir: str, method = 'scArches', latent=None):
-        """Attach the latent and write the AnnData beside the model.
-
-        Args:
-            adata (AnnData): Object to write.
-            model: The fine-tuned model.
-            save_dir (Path): Where to write.
-            method (str): Names the obsm key.
-            latent (np.ndarray, optional): Precomputed latent.
-        """
+        """Attach the latent as `.obsm['X_{method}']` and write the AnnData beside the model."""
         adata.obsm[f"X_{method}"] = latent if latent is not None else model.get_latent_representation(adata)
-        # Write to a same-directory temp path and rename into place rather
-        # than writing the final filename directly: a run killed mid-write
-        # must leave no file at the trusted path, not a truncated one that
-        # the next run's reload silently trusts (the same invariant
-        # IndexBuilder's node-local-scratch staging follows for index
-        # builds -- `os.replace` on the same filesystem is atomic).
+        # Temp path + same-filesystem `os.replace` (atomic): a run killed
+        # mid-write leaves no file at the trusted path rather than a truncated
+        # one the next run's reload would trust.
         save_dir = Path(save_dir)
         final_path = save_dir / f"{self.name}.h5ad"
         tmp_path = save_dir / f".{self.name}.h5ad.partial-{os.getpid()}"
@@ -310,14 +261,8 @@ class scArchesIntegrator:
     def MapReference(self, overwrite: bool = False):
         """Map the query onto the reference, reloading a cached fit when one exists.
 
-        The saved object legitimately carries more genes than the model was registered
-        on, so a copy is aligned for the reload and predict calls only.
-
-        Args:
-            overwrite (bool): Retrain even when a cached model exists.
-
-        Returns:
-            AnnData: The mapped object.
+        `overwrite` retrains even when a cached model exists. Returns the mapped
+        AnnData.
         """
         entry = self.registry.find_entry(self.name)
         if not overwrite and entry and "model_path" in entry and Path(entry["model_path"]).exists():
@@ -336,31 +281,21 @@ class scArchesIntegrator:
                 # the upsert in _map_query_ref) -- scvi's load() would raise
                 # if this were SCVI against a JointEmbeddingSCVI checkpoint.
                 model = self.model_cls.load(model_path, adata=aligned)
-                # Reuse the already-resolved model_path rather than
-                # recomputing it -- recomputing risked silently diverging
-                # from where the model was actually just loaded from if the
-                # folder-naming formula ever changes.
+                # Write back to where the model was loaded from, not a
+                # recomputed path.
                 self._update_save_anndata(self.adata, model, save_dir = model_path,
                                           latent = model.get_latent_representation(aligned))
                 return self.adata
             except Exception as e:
-                # A registry entry is now only ever written once the anndata
-                # write it points at has actually completed (see
-                # _map_query_ref), but that has not always been true -- a run
-                # killed mid-write (SLURM walltime, OOM) used to leave a
-                # registry entry pointing at a truncated .h5ad forever, since
-                # nothing here re-validated it before trusting it. Rather than
-                # leaving this target permanently stuck on a corrupt cache
-                # entry, fall through and retrain from scratch, exactly as
-                # the "model_path missing" case below already does.
+                # A cache entry that cannot be reloaded (e.g. a truncated h5ad
+                # from an older run) falls through to retraining, like a
+                # missing model_path, instead of leaving the target stuck.
                 self.logger.warning(
                     "[scArches] Cached model/anndata for '{}' at {} could not be reloaded "
                     "({}); retraining from scratch.".format(self.name, model_path, e))
 
-        # Also reached when a registry entry exists but its model_path no longer
-        # exists on disk (e.g. deleted after cleanup), or the cached reload
-        # above failed -- previously this fell through both branches and
-        # silently returned the untouched input adata without ever training.
+        # Also reached when a registry entry's model_path no longer exists on
+        # disk, or the cached reload above failed.
         ref_adata, query_adata = self._split_reference_query()
         ref_model = self._load_reference_model(ref_adata)
         model, self.adata = self._map_query_ref(ref_model, ref_adata, query_adata)

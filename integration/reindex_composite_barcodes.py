@@ -4,7 +4,7 @@
 **This is a backfill, not a new convention.** ``orchestrator.py::_concatenate_adata``
 already sets ``adata.obs_names = [f"{s}.{bc}" ...]``, but that line used to be
 nested inside an ``if "sample" not in adata.obs`` that was always False, so it
-never ran -- see the comment block at ``orchestrator.py:249-261``. The objects
+never ran (see docs/decisions/concatenation-hygiene.md). The objects
 under ``results/integration/scArches/`` were written before that was un-nested
 and so carry the bare 10x barcode as their index. A re-run of the integration
 stage today would produce exactly what this script writes.
@@ -58,14 +58,7 @@ def _dec(x):
 
 
 def read_index(obs: h5py.Group) -> tuple[str, np.ndarray]:
-    """The obs_names index from an open HDF5 obs group.
-
-    Args:
-        obs: The h5py obs group.
-
-    Returns:
-        list[str]: Barcodes.
-    """
+    """The obs index from an open HDF5 obs group, as (index key, values)."""
     key = _dec(obs.attrs['_index'])
     g = obs[key]
     if isinstance(g, h5py.Group):  # nullable-string-array
@@ -76,15 +69,7 @@ def read_index(obs: h5py.Group) -> tuple[str, np.ndarray]:
 
 
 def read_categorical(obs: h5py.Group, key: str) -> np.ndarray:
-    """Read one categorical obs column back to plain strings.
-
-    Args:
-        obs: The h5py obs group.
-        key (str): Column name.
-
-    Returns:
-        list[str]: Values.
-    """
+    """Read one categorical obs column back to plain strings."""
     g = obs[key]
     cats = np.array([_dec(x) for x in g['categories'][:]], dtype=object)
     return cats[g['codes'][:]].astype(str)
@@ -106,12 +91,7 @@ def _write_string_index(obs: h5py.Group, key: str, values: np.ndarray) -> None:
 
 
 def _write_raw_column(obs: h5py.Group, values: np.ndarray) -> None:
-    """Write an obs column as a plain string array.
-
-    Args:
-        obs: The h5py obs group.
-        values (list[str]): Values to write.
-    """
+    """Write an obs column as a plain string array."""
     if RAW_COL in obs:
         del obs[RAW_COL]
     d = obs.create_dataset(RAW_COL, data=np.array(values, dtype=object),
@@ -170,17 +150,7 @@ def _rewrite_frame_index(g: h5py.Group, composite: np.ndarray) -> str:
 
 
 def process(name: str, path: Path, commit: bool, keep_raw: bool) -> None:
-    """Rewrite one h5ad's barcodes to `{sample}.{barcode}` form.
-
-    Args:
-        name (str): Target name, for the log lines.
-        path (Path): The h5ad.
-        commit (bool): Write the change; otherwise report only.
-        keep_raw (bool): Keep the original barcodes in a new column.
-
-    Returns:
-        dict: What was found and what was written.
-    """
+    """Rewrite one h5ad's barcodes to `{sample}.{barcode}` form (report only unless `commit`)."""
     mode = 'r+' if commit else 'r'
     with h5py.File(path, mode) as f:
         obs = f['obs']
@@ -246,11 +216,7 @@ def process(name: str, path: Path, commit: bool, keep_raw: bool) -> None:
 
 
 def main() -> None:
-    """CLI entry point: reindex composite barcodes in the named h5ads.
-
-    Returns:
-        int: Process exit status.
-    """
+    """CLI entry point: reindex composite barcodes in the named h5ads."""
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = ap.add_mutually_exclusive_group(required=True)

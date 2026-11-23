@@ -24,14 +24,7 @@ from pathlib import Path
 
 
 def _scalar(value) -> str:
-    """Render one scalar as YAML, quoting only where needed.
-
-    Args:
-        value: The scalar.
-
-    Returns:
-        str: YAML text.
-    """
+    """Render one scalar in the file's conventions: True/False, single-quoted strings."""
     if isinstance(value, bool):
         return 'True' if value else 'False'
     if isinstance(value, str):
@@ -40,28 +33,14 @@ def _scalar(value) -> str:
 
 
 def _flow_list(items) -> str:
-    """Render a list in YAML flow style.
-
-    Args:
-        items (iterable): The items.
-
-    Returns:
-        str: YAML text.
-    """
+    """Render a list in YAML flow style."""
     return '[' + ', '.join(_scalar(i) for i in items) + ']'
 
 
 def _render_entry(name: str, entry: dict) -> list:
-    """Render one target entry as YAML text.
+    """Render one target entry as YAML lines (up to three levels of nesting).
 
     Written textually rather than via yaml.dump so the file's comments survive.
-
-    Args:
-        name (str): Target name.
-        entry (dict): The target's keys.
-
-    Returns:
-        str: YAML text.
     """
     lines = ['  {}:'.format(name)]
     for key, value in entry.items():
@@ -82,13 +61,7 @@ def _render_entry(name: str, entry: dict) -> list:
 
 
 def write_target_entry(config_path, name: str, entry: dict) -> None:
-    """Append a target entry to integration_config.yaml.
-
-    Args:
-        config_path (Path): The config.
-        name (str): Target name.
-        entry (dict): The target's keys.
-    """
+    """Splice a new target entry into IntegrateConfigs; raises ValueError if the name exists."""
     path = Path(config_path)
     text = path.read_text()
 

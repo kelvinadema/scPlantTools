@@ -20,8 +20,8 @@ import anndata
 # in integration, so set it once here rather than at each write site.
 anndata.settings.allow_write_nullable_strings = True
 
-# Every class here must satisfy TWO requirements, which until 2026-08-17 were
-# stated as the single stricter one "must subclass scvi.model.SCVI":
+# Every class here must satisfy TWO requirements (not the stricter proxy
+# "must subclass scvi.model.SCVI"):
 #
 #   1. drivable through one `setup_anndata` -> `cls(adata, **model_params)` ->
 #      `train(**kw)` path, which is all SingleCellIntegrate knows how to do;
@@ -59,17 +59,7 @@ MODEL_CLASSES = {"SCVI": SCVI, "JointEmbeddingSCVI": JointEmbeddingSCVI, "DRVI":
 
 
 def resolve_model_class(name: str):
-    """The scvi model class a `model_class` name refers to.
-
-    Args:
-        name (str): A key of MODEL_CLASSES.
-
-    Returns:
-        type: The model class.
-
-    Raises:
-        ValueError: If the name is unknown.
-    """
+    """The scvi model class a `model_class` name refers to; ValueError if unknown."""
     try:
         return MODEL_CLASSES[name]
     except KeyError:
@@ -88,15 +78,6 @@ def model_output_folder(model_class: str) -> str:
     'scArches' folder name directly at their own call site.
     """
     return 'scVI' if model_class == 'SCVI' else model_class
-
-
-# validate_solo_covariates was removed along with `run_solo`. The constraint it
-# enforced is real and still applies -- SOLO.from_scvi_model raises on a source
-# model carrying any registered categorical or continuous covariate -- but it is
-# no longer a config combination anyone can express here: doublet detection
-# moved to the mapping stage, where its model is trained with no covariates by
-# construction (mapping/doublets.py). Integration targets are now free
-# to use covariates without interacting with doublet calling at all.
 
 
 _INTEGRATION_VERSION_PACKAGES = ('scvi-tools', 'scanpy', 'anndata', 'numpy', 'pandas', 'scipy', 'scikit-learn', 'ray', 'torch')
@@ -137,21 +118,12 @@ def integration_tool_versions() -> dict:
     return dict(versions)
 
 
-# `parse_covariates` moved to shared/targets.py::parse_covariates. It is pure
-# config resolution with no scvi dependency, and this module imports scvi at
-# module scope -- which would have dragged the whole integration env into
-# shared/validate.py the moment the validator needed to resolve a target.
-
-
 class CacheUtils:
     """Read/write the integration registry, under a file lock."""
     def __init__(self, registry_name: str="scvi_tune_registry.json", subdir: str=""):
         # No wrapper folder by default -- results/integration/scvi_tune_registry.json
-        # directly. (Path joins with '' are a no-op, so subdir="" resolves to the
-        # parent directory itself.) Previously defaulted to "scvi_models", which
-        # existed only to hold per-target model output; that output now lives
-        # under results/integration/<model_class or 'scArches'>/<target>/ instead,
-        # so the registry no longer needs a subdir of its own.
+        # directly (a Path join with '' is a no-op). Per-target model output
+        # lives under results/integration/<model_class or 'scArches'>/<target>/.
         self.registry_path = find_root_dir() / "results" / "integration" / subdir / registry_name
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
         # The lock is a SEPARATE file, never the registry itself. save_registry
@@ -164,24 +136,19 @@ class CacheUtils:
     @contextmanager
     def _locked(self):
         """
-        Hold an exclusive advisory lock on the registry for the duration of a
-        read-modify-write.
+        Hold an exclusive advisory lock on the registry for a whole read-modify-write.
 
-        This has to wrap the WHOLE upsert, not the individual load/save calls:
-        the race is between one process's read and its own write, so locking
-        load_registry and save_registry separately would leave the window it is
-        meant to close exactly as wide as before.
+        It must wrap the WHOLE upsert: the race is between one process's read and
+        its own write, so locking load and save separately would not close it.
 
-        fcntl.flock is advisory and cooperative -- it excludes other processes
-        that take the same lock, and nothing else. /lustre here is mounted with
-        the `flock` option (checked: `mount | grep lustre`), so the lock is
-        coherent across compute nodes, which is what makes it usable for
-        concurrent array tasks at all rather than only for threads on one node.
-        Note this is unrelated to HDF5_USE_FILE_LOCKING=FALSE in the batch
-        scripts: that disables HDF5's own locking of data files, not flock.
+        fcntl.flock is advisory -- it excludes only processes that take the same
+        lock. It is coherent across compute nodes only because /lustre is mounted
+        with the `flock` option (`mount | grep lustre`); that is what makes it
+        usable for concurrent array tasks. Unrelated to HDF5_USE_FILE_LOCKING=FALSE
+        in the batch scripts, which disables HDF5's own locking of data files.
 
-        The lock is released by close() on the way out even if the body raises,
-        so a crashed writer cannot wedge the registry for later runs.
+        The lock is released even if the body raises, so a crashed writer cannot
+        wedge the registry.
         """
         with open(self.lock_path, "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
@@ -191,10 +158,10 @@ class CacheUtils:
                 fcntl.flock(lock, fcntl.LOCK_UN)
 
     def load_registry(self):
-        """Read the registry, returning an empty list when it does not exist yet.
+        """Read the registry entries.
 
-        Returns:
-            list[dict]: The entries.
+        A missing or empty file reads as []. So does a file that is not valid
+        JSON -- see the note in save_registry.
         """
         if not self.registry_path.exists() or self.registry_path.stat().st_size == 0:
             return []
@@ -205,18 +172,14 @@ class CacheUtils:
             return []
 
     def save_registry(self, registry):
-        """Write the registry atomically.
-
-        Args:
-            registry (list[dict]): The entries to write.
-        """
+        """Write the registry atomically."""
         # Write-then-rename rather than truncate-in-place. os.replace is atomic
         # within a filesystem, so a reader sees either the whole old registry or
         # the whole new one, never a half-written file. That matters more here
         # than usual because load_registry swallows JSONDecodeError and returns
         # [] -- a truncated write would not raise, it would silently present an
         # EMPTY registry, and the next save would then persist that emptiness.
-        # A crash mid-write now leaves the stale-but-valid registry instead.
+        # A crash mid-write leaves the stale-but-valid registry instead.
         tmp_path = self.registry_path.with_suffix(
             self.registry_path.suffix + f".partial-{os.getpid()}"
         )
@@ -231,41 +194,23 @@ class CacheUtils:
             raise
 
     def add_entry(self, entry: dict):
-        """Append an entry, taking the lock.
-
-        Args:
-            entry (dict): The entry.
-        """
+        """Append an entry, taking the lock."""
         with self._locked():
             self._add_entry_unlocked(entry)
 
     def _add_entry_unlocked(self, entry: dict):
-        """Append an entry. The caller must already hold the lock.
-
-        Args:
-            entry (dict): The entry.
-        """
+        """Append an entry. The caller must already hold the lock."""
         registry = self.load_registry()
         registry.append(entry)
         self.save_registry(registry)
 
     def update_entry(self, dataset_id: str, updates: dict):
-        """Merge updates into one entry, taking the lock.
-
-        Args:
-            dataset_id (str): Entry key.
-            updates (dict): Fields to merge.
-        """
+        """Merge updates into one entry, taking the lock; returns whether it existed."""
         with self._locked():
             return self._update_entry_unlocked(dataset_id, updates)
 
     def _update_entry_unlocked(self, dataset_id: str, updates: dict):
-        """Merge updates into one entry. The caller must already hold the lock.
-
-        Args:
-            dataset_id (str): Entry key.
-            updates (dict): Fields to merge.
-        """
+        """Merge updates into one entry; returns whether it existed. The caller must hold the lock."""
         registry = self.load_registry()
         updated = False
         for entry in registry:
@@ -278,14 +223,7 @@ class CacheUtils:
         return updated
 
     def find_entry(self, dataset_id: str):
-        """The entry for `dataset_id`, or None.
-
-        Args:
-            dataset_id (str): Entry key.
-
-        Returns:
-            dict or None: The entry.
-        """
+        """The entry for `dataset_id`, or None."""
         # Read-only, so it takes the lock only to avoid reading a registry
         # mid-update. It cannot observe a torn file (see save_registry), but it
         # can still observe a stale one without this.
@@ -302,9 +240,7 @@ class CacheUtils:
 
         The one write path every registry mutation should go through -- a bare
         add_entry() call for a dataset_id that might already exist creates a
-        second, orphaned entry instead of merging into the first (the bug this
-        method replaces: integrate.py's autotune save and refmapping.py's
-        scArches save both used to call add_entry directly).
+        second, orphaned entry instead of merging into the first.
 
         The lock is taken ONCE here and the unlocked helpers are called beneath
         it. flock is per (process, file description) rather than reentrant per

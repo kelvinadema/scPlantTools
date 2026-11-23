@@ -35,11 +35,6 @@ def _drop_per_sample_embeddings(adata, sample: str, logger) -> None:
     these is a coordinate space fit to one sample alone -- concatenated, it would
     look like a valid cohort embedding and mean nothing. The `leiden_*` labels
     beside them are left alone. See docs/decisions/concatenation-hygiene.md.
-
-    Args:
-        adata (AnnData): One sample's object, modified in place.
-        sample (str): Sample name, for the log line.
-        logger (logging.Logger): Where the debug lines go.
     """
     for key in [k for k in list(adata.obsm)
                 if k.endswith(_PER_SAMPLE_EMBEDDING_SUFFIXES)]:
@@ -53,14 +48,8 @@ def _drop_unused_layers(adata, sample: str, keep, logger) -> None:
 
     A mapping artifact carries eight layers plus `X`, and `join="outer"` keeps
     every one -- ~90% of a 69 GB target that is never read, and the usual cause of
-    an OOM here. See docs/decisions/concatenation-hygiene.md.
-
-    Args:
-        adata (AnnData): One sample's object, modified in place.
-        sample (str): Sample name, for the log lines.
-        keep (list[str] or None): Layers to keep. None keeps everything, which is
-            the default and what every target predating `keep_layers` relies on.
-        logger (logging.Logger): Where the warning and debug lines go.
+    an OOM here. `keep=None` keeps every layer (the default). See
+    docs/decisions/concatenation-hygiene.md.
     """
     if keep is None:
         return
@@ -100,12 +89,6 @@ def derive_corrected_layers(adata, sample: str = '', logger=None,
     never adds -- and a violation raises rather than being allocated. Computed
     in dense row blocks so the arithmetic is exact and the sparse result carries
     no explicit zeros.
-
-    Args:
-        adata (AnnData): One sample's object, modified in place.
-        sample (str): Sample name, for the log lines.
-        logger (logging.Logger, optional): Where the summary line goes.
-        chunk_rows (int): Rows per dense block.
 
     Returns:
         dict: The provenance record, also written to `adata.uns['corrected_layers']`.
@@ -240,13 +223,7 @@ class IntegrationManager:
         target resolves to, shared with the validator so the two cannot disagree about a
         default. `resolve_model_class` stays here because `integrationutils` imports
         scvi at module scope and `resolve_run_spec` must stay importable outside the
-        integration env.
-
-        Args:
-            target (str): Target name.
-
-        Returns:
-            tuple: (method (str), args (dict)).
+        integration env. Returns (method, args).
         """
         args = resolve_run_spec(self.config, target)
         if args["method"] == "scVI":
@@ -259,19 +236,9 @@ class IntegrationManager:
         Per-sample embeddings and unused layers are dropped, sample-sheet design
         columns are stamped onto `.obs`, barcodes are prefixed with the sample name,
         and dtypes are aligned -- see docs/decisions/concatenation-hygiene.md and
-        obs-sanitization.md. Pass either `samples`, or both `reference` and `query`.
-
-        Args:
-            samples (list[str], optional): Samples to concatenate.
-            reference (dict, optional): {sample: {'adata_path': ...}} for the scArches
-                reference side.
-            query (list[str], optional): scArches query samples.
-
-        Returns:
-            AnnData: The concatenated object, gene-filtered if `min_cells` is set.
-
-        Raises:
-            ValueError: If neither form of the sample arguments was given.
+        obs-sanitization.md. Pass either `samples`, or both `reference`
+        ({sample: {'adata_path': ...}}, the scArches reference side) and `query`.
+        The result is gene-filtered if `min_cells` is set.
         """
         adatas = []
         if reference is not None and query is not None:
@@ -360,8 +327,7 @@ class IntegrationManager:
     def _layers_to_keep(self):
         """`keep_layers`, plus the two derived layers when the target derives them.
 
-        Returns:
-            list[str] or None: Layers to keep per sample; None keeps everything.
+        None keeps everything.
         """
         if self.keep_layers is None:
             return None
@@ -373,16 +339,8 @@ class IntegrationManager:
     def _read_gene_list(self, path):
         """The gene ids in an `exclude_genes:` file, or None when the target names none.
 
-        One id per line; blank lines and `#` comments are skipped.
-
-        Args:
-            path (str or None): Resolved file path.
-
-        Returns:
-            set[str] or None: The ids.
-
-        Raises:
-            FileNotFoundError: If the file does not exist.
+        One id per line; blank lines and `#` comments are skipped. A named file
+        that does not exist raises FileNotFoundError.
         """
         if not path:
             return None
@@ -405,13 +363,8 @@ class IntegrationManager:
 
         Exists for the `do_hvg: False` case, which otherwise has no gene floor at all.
         Counts on the layer the model trains on, and on positive values rather than
-        stored ones. See docs/decisions/concatenation-hygiene.md.
-
-        Args:
-            adata (AnnData): The concatenated object, subset in place.
-
-        Raises:
-            ValueError: If the floor removes every gene.
+        stored ones. See docs/decisions/concatenation-hygiene.md. Raises
+        ValueError if the floor removes every gene.
         """
         if not self.min_cells:
             return
@@ -450,13 +403,7 @@ class IntegrationManager:
         them agree on a non-categorical, non-object dtype; everything else is filled
         and stringified. Both halves of that rule exist for a specific serialization
         failure -- see docs/decisions/obs-sanitization.md before relaxing either.
-
-        Args:
-            adatas (list[AnnData]): One per sample.
-            fill_value (str): Value written into a column a sample lacks.
-
-        Returns:
-            list[AnnData]: The same objects, with `.obs` replaced.
+        `fill_value` is written into a column a sample lacks.
         """
         def _dtype_kind(series):
             """The dtype to compare across samples, or None if never safe to leave alone."""
@@ -493,11 +440,7 @@ class IntegrationManager:
         return sanitized
 
     def _ensure_reference(self, ref_model_name):
-        """Train the named scArches reference target if the registry has no entry.
-
-        Args:
-            ref_model_name (str): Target name of the reference model.
-        """
+        """Train the named scArches reference target if the registry has no entry."""
         entry = self.cache.find_entry(ref_model_name)
         if entry is None:
             self.logger.info(f"Reference model '{ref_model_name}' not found. Training...")
@@ -513,12 +456,6 @@ class IntegrationManager:
         rather than recomputed from a formula that would have to stay in sync with
         integrate.py's and refmapping.py's own folder naming. Falls back to a
         method-based path only when no registry entry exists yet.
-
-        Args:
-            method (str): Integration method, used only by the fallback path.
-
-        Returns:
-            Path: The target's directory.
         """
         entry = self.cache.find_entry(self.target)
         model_path = entry.get('model_path') if entry else None
@@ -530,15 +467,7 @@ class IntegrationManager:
         return save_dir
 
     def _dispatch_reduction(self, adata, method):
-        """Compute UMAP + leiden on each of this method's latents, and plot if asked.
-
-        Args:
-            adata (AnnData): Object carrying the latent in `.obsm`.
-            method (str): Names the latents to reduce, `X_{method}*`.
-
-        Returns:
-            AnnData: The object, with UMAP and leiden keys added.
-        """
+        """Compute UMAP + leiden on each `X_{method}*` latent, and plot if asked."""
         latent_keys = [k for k in adata.obsm.keys() if k.startswith(f"X_{method}")]
         if not latent_keys:
             self.logger.warning(f"[DimReduc] No latent keys found for method '{method}' in adata.obsm.")
@@ -570,17 +499,8 @@ class IntegrationManager:
         never filled: a component key absent from `.obs` raises instead. See
         docs/decisions/batch-keys-and-confounds.md.
 
-        Args:
-            adata (AnnData): The concatenated object, modified in place.
-            spec (dict): Batch-key spec from `resolve_run_spec`, with 'mode', 'column'
-                and (for the derived modes) 'components'.
-
-        Returns:
-            str or None: The `.obs` column to correct on.
-
-        Raises:
-            KeyError: If a component key is not an `.obs` column.
-            ValueError: If the derived column has missing values.
+        Raises KeyError if a component key is not an `.obs` column, and ValueError
+        if the derived column has missing values.
         """
         mode = spec['mode']
         if mode in ('none', 'single'):
@@ -637,9 +557,6 @@ class IntegrationManager:
         Mirrors the reload condition in `ContrastiveIntegrator.integrate()` so a sweep
         is not run for a target that will simply load its cached model. Deliberately in
         step with that check: if one changes, this must.
-
-        Returns:
-            bool: True if training will happen.
         """
         if self.overwrite:
             return True
@@ -660,15 +577,8 @@ class IntegrationManager:
         so every criterion here is computed outside the objective. See
         docs/decisions/contrastive-sweep.md.
 
-        Args:
-            adata (AnnData): The concatenated object. Swept on a copy.
-            args (dict): Resolved run spec for this target.
-            batch_key (str or None): Column to correct on.
-
-        Returns:
-            dict: The `model_args` to train with. On a grid where every point
-                collapsed, the target's own model_params are returned unchanged and the
-                run continues.
+        Returns the `model_args` to train with. If every grid point collapsed, the
+        target's own model_params are returned unchanged and the run continues.
         """
         from .contrastive import (select_contrast_grid, best_grid_point, METHOD_NAME as _CVI)
         from .cvi_sweep import (build_grid, default_penalties, DEFAULT_SALIENT,
@@ -690,23 +600,14 @@ class IntegrationManager:
         # caller's adata must also survive untouched for the final fit, since
         # _prep overwrites .X and stamps _scvi_* columns.
         #
-        # base_model_params IS NOT OPTIONAL despite its default -- without it the
-        # grid ranks penalties at contrastive._MODEL_DEFAULTS' n_layers=1 while
-        # the winner trains at the target's own depth.
-        #
-        # seeds IS NOT OPTIONAL EITHER, and was missing until 2026-08-07. It
-        # defaults to (0,) in select_contrast_grid, so this path -- the one every
-        # `sweep: true` target uses -- fitted ONE point per grid cell while the
-        # cvi_sweep CLI beside it used DEFAULT_SEEDS' three. That made
-        # best_grid_point's "MEDIAN across replicates" a median of one, on
-        # `quality = separation - leakage_ratio`, where leakage_ratio is the
-        # column with enough fit-to-fit variance to reorder the top rows: an
-        # identical re-run of 10x_BAP moved it 0.353 -> 0.556 while separation
-        # held at 0.324 vs 0.343. run_cvi_sweep.sh's header had already recorded
-        # the consequence -- "with one fit per point the top rows were separated
-        # by less than their own variance" -- against the other entry point.
-        # The two callers now agree; passing it explicitly rather than changing
-        # the default keeps a bare select_contrast_grid() call cheap.
+        # Neither base_model_params nor seeds is optional here, despite their
+        # defaults: without the first the grid ranks penalties at
+        # contrastive._MODEL_DEFAULTS' n_layers=1 while the winner trains at the
+        # target's own depth; without the second (default (0,)) the median across
+        # replicates is a median of one fit. Same seeds as the cvi_sweep CLI.
+        # This path passed no seeds before 2026-08-07, so `sweep: true` choices
+        # made earlier rest on one fit per grid point. See
+        # docs/decisions/contrastive-sweep.md.
         base_params = (args.get('model_params') or {}).get('model_params') or {}
         df = select_contrast_grid(
             adata.copy(), background_samples=args['background'],
@@ -741,13 +642,7 @@ class IntegrationManager:
         Dispatches on the resolved method (scVI / contrastiveVI / scArches), then
         reduces, diagnoses and -- for a single-sample target -- embeds the result back
         into that sample's mapping report. Diagnostics and figures are gated on
-        `--plot`.
-
-        Returns:
-            AnnData: The integrated object.
-
-        Raises:
-            Exception: Whatever the integrator raised, logged and re-raised.
+        `--plot`. An integrator exception is logged and re-raised.
         """
         self.logger.info('[MAIN] Loaded configs, starting integration')
         method, args = self._get_type(self.target)
@@ -756,13 +651,11 @@ class IntegrationManager:
         if args.get("artifact_key"):
             self.artifact_key = args["artifact_key"]
 
-        # Read before the first _concatenate_adata call, since that is where it
-        # takes effect. None = keep every layer (the historical behaviour).
+        # These three are read before the first _concatenate_adata call, where
+        # they take effect. keep_layers None = keep every layer; min_cells None
+        # = no gene filtering; the corrected-layer split runs per sample there.
         self.keep_layers = args.get("keep_layers")
-        # Same timing, same reason. None = no gene filtering, which every target
-        # written before this key existed relies on.
         self.min_cells = args.get("min_cells")
-        # Same timing again: the split runs per sample inside _concatenate_adata.
         self.derive_corrected_layers = bool(args.get("derive_corrected_layers"))
 
         # Kept so diagnostics can read .history for the training-loss curves.
@@ -813,10 +706,10 @@ class IntegrationManager:
                 self._ensure_reference(args["reference_model"])
                 ref_entry = self.cache.find_entry(args["reference_model"])
                 # Not restricted to SCVI references: every class in
-                # MODEL_CLASSES subclasses SCVI and inherits ArchesMixin's
-                # load_query_data, so refmapping dispatches on the reference's
-                # own class. This only rejects a class the build cannot
-                # construct, before any GPU work.
+                # MODEL_CLASSES carries ArchesMixin's load_query_data (SysVI
+                # without subclassing SCVI; see integrationutils), so refmapping
+                # dispatches on the reference's own class. This only rejects a
+                # class the build cannot construct, before any GPU work.
                 ref_model_class = ref_entry.get("model_class", "SCVI")
                 resolve_model_class(ref_model_class)
                 ref_model_path = ref_entry["model_path"]
@@ -831,10 +724,9 @@ class IntegrationManager:
         except Exception as e:
             self.logger.error(f"[IntegrationManager] Integration failed for target '{self.target}': {e}")
             raise
-        # Doublet detection is no longer run here; it is a per-sample mapping
-        # step now (docs/decisions/doublet-detection.md). `.obs['solo_doublet']`
-        # arrives with the mapping artifact and is consumed just below by
-        # _dispatch_reduction's colouring.
+        # Doublet detection is a per-sample mapping step
+        # (docs/decisions/doublet-detection.md); `.obs['solo_doublet']` arrives
+        # with the mapping artifact and is only used for colouring below.
         adata = self._dispatch_reduction(adata, method)
 
         # Training-loss curves plus label-free batch-mixing metrics, stamped

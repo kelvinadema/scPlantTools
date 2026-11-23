@@ -214,11 +214,11 @@ def batch_mixing_metrics(adata, latent_key, batch_key='batch', n_neighbors=_METR
 def run_diagnostics(adata, method, out_dir, target, model=None, batch_key='batch',
                     latent_keys=None, logger=None, save_plot=True):
     """
-    One entry point the orchestrator calls after dimensionality reduction.
+    Entry point used after dimensionality reduction by the orchestrator and by refine.
 
     Training-loss curves run only when a `model` carrying history is supplied
     (the scVI path); batch-mixing runs on every latent `.obsm` for the method,
-    so it also covers scArches if wired in later. Every piece is wrapped so a
+    or on `latent_keys` when given. Every piece is wrapped so a
     diagnostics failure warns and moves on rather than costing the trained model
     -- the model, its h5ad and the UMAP are the deliverables, diagnostics are an
     annotation on top. The batch-mixing scalars are stamped into

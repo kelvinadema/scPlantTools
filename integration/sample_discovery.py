@@ -24,15 +24,7 @@ class SampleNotMappedError(RuntimeError):
 def load_sample_manifest(sample: str, input_dir) -> dict:
     """Read one sample's mapping manifest.
 
-    Args:
-        sample (str): Sample name.
-        input_dir (Path): Mapping results root.
-
-    Returns:
-        dict: The manifest.
-
-    Raises:
-        SampleNotMappedError: If no manifest exists.
+    Raises SampleNotMappedError if it is missing or its status is not 'complete'.
     """
     manifest_path = Path(input_dir) / sample / 'manifest.json'
     if not manifest_path.exists():
@@ -132,14 +124,5 @@ def check_artifact_availability(samples, input_dir, artifact_key: str, fallback:
 
 
 def resolve_batch(sample: str, manifest: dict, sample_metadata: dict) -> str:
-    """The batch a sample belongs to, from its manifest or the sample sheet.
-
-    Args:
-        sample (str): Sample name.
-        manifest (dict): The sample's manifest.
-        sample_metadata (dict): Resolved sample sheet.
-
-    Returns:
-        str: The batch label.
-    """
+    """The batch a sample belongs to: manifest, then sample sheet, then the sample name."""
     return manifest.get('batch') or (sample_metadata.get(sample, {}) or {}).get('batch', sample)
