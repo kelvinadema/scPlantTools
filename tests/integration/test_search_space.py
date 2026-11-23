@@ -5,9 +5,8 @@
 so the two cannot drift into meaning different things -- which makes the value
 grammar it implements worth pinning.
 
-The claims here were prose in `integrate.py` until 2026-08-06 (see
-`docs/decisions/autotune-search-spaces.md`); they are assertions now because
-prose cannot fail when the code regresses.
+The rationale is in `docs/decisions/autotune-search-spaces.md`; the claims are
+assertions here because prose cannot fail when the code regresses.
 """
 
 from __future__ import annotations
@@ -117,8 +116,8 @@ def test_drvi_widens_the_base_space_rather_than_replacing_it():
 def test_scvi_is_the_base_space_plus_its_own_normalization_pins():
     # Unrevised on purpose: the tune registry holds no plain-SCVI fit, so there
     # is no evidence to narrow the searched keys with. The three pins are
-    # separate from _BASE_SPACE as of 2026-08-17 -- they are per-class, and
-    # sharing them silently imposed DRVI's convention on the other classes.
+    # separate from _BASE_SPACE -- they are per-class, and sharing them would
+    # impose DRVI's convention on the other classes.
     assert _SEARCH_SPACE_DEFAULTS['SCVI'] == {**_BASE_SPACE, **_SCVI_NORM_PINS}
 
 
@@ -261,9 +260,7 @@ def test_hvg_selection_stashes_the_full_gene_object():
     assert '_full_gene_adata' in src, 'HVG branch no longer stashes the full object'
     save = inspect.getsource(SingleCellIntegrate._update_save_anndata)
     assert '_full_gene_adata' in save, 'save path no longer restores the full gene set'
-    # The marking moved into mark_trained_features on 2026-09-10 (two-layer
-    # label spaces); the save path must still call it, and it must still write
-    # .var['hvg'].
+    # The save path must call mark_trained_features, and it must write .var['hvg'].
     from integration.integrate import mark_trained_features
     assert 'mark_trained_features' in save, 'save path no longer marks the trained genes'
     assert "var['hvg']" in inspect.getsource(mark_trained_features), \

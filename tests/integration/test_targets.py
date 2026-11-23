@@ -6,7 +6,7 @@ parameters it trains with. It is pure config logic with no scvi imports (by
 design -- preflight runs it outside the integration env), so it is cheap to test
 and it drives every integration job.
 
-The rules being pinned are the ones stated in CLAUDE.md: `defaults: {k: v}` is
+The rules being pinned (docs/configuration.md): `defaults: {k: v}` is
 exactly equivalent to writing `k: v` on every entry, the merge is shallow, and a
 key present-but-null counts as absent. Each of those is a place where a
 plausible alternative reading would silently change what a run trains on.
@@ -85,7 +85,7 @@ def test_a_target_overrides_a_default():
 
 def test_a_null_value_counts_as_absent():
     """
-    Stated explicitly in CLAUDE.md. The alternative reading -- null means
+    The alternative reading -- null means
     "explicitly no value" and shadows the default -- is equally plausible and
     would silently change what a target trains with.
     """

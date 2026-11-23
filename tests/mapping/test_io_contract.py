@@ -47,8 +47,6 @@ def test_provenance_never_stores_none(adata):
     None would vanish from the file rather than raise -- and the reader would see
     a missing key, indistinguishable from an old artifact. `io.py` coerces to ''
     for exactly this reason.
-
-    This invariant is stated in CLAUDE.md and, until now, enforced by nothing.
     """
     sio.stamp_provenance(adata, sample='S1', mapper='alevin', stage='qc',
                          config_paths=None, extra={'deliberate_none': None})

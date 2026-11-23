@@ -1,9 +1,8 @@
 """Proteome preparation -- `annotation/proteome.py`.
 
 These are the pure functions every gene identifier in the annotation stage
-passes through. Their rules were prose in the module docstrings until
-2026-08-06 (see `docs/decisions/proteome-preparation.md`); the ones that name a
-concrete input and output are assertions here.
+passes through. Their rules are in `docs/decisions/proteome-preparation.md`;
+the ones that name a concrete input and output are assertions here.
 
 The normalization cases are taken from the real disagreements between this
 project's marker files and proteomes, so a "simplification" that breaks any of

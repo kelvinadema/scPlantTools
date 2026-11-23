@@ -71,7 +71,6 @@ def test_iforest_lower_contamination_flags_fewer(make_filter):
 # ================================================================ idempotency
 
 def test_mad_filter_is_idempotent(make_filter, planted):
-    """Running the same filter twice must not change the result."""
     adata, _ = planted
     f = make_filter(adata)
     first = _flags(adata, f._mad_filter(['n_genes'], k=3)).copy()

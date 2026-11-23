@@ -2,8 +2,7 @@
 Label-space target keys -- `layer`, `hvg_batch_key`, `exclude_genes`,
 `derive_corrected_layers` (shared/config_spec.py, shared/targets.py).
 
-Added 2026-09-10 for the two-layer label spaces
-(docs/decisions/two-layer-label-spaces.md). The invariant that matters most is
+See docs/decisions/two-layer-label-spaces.md. The invariant that matters most is
 the first test: a target that states none of them resolves exactly as it did
 before the keys existed, so nothing already fitted changes.
 """

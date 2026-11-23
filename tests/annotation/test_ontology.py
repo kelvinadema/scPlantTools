@@ -63,9 +63,10 @@ def test_ontology_loads_offline(ontology):
 
 def test_traversal_follows_part_of_not_only_is_a(ontology):
     """
-    The load-bearing test. Find a term whose ancestor set differs between
-    is_a-only and is_a+part_of, and assert the default traversal includes the
-    part_of ancestors.
+    The load-bearing test. Find a term whose ancestor set differs between an
+    is_a-only and an is_a+part_of traversal (both passed explicitly via
+    `relations=`) and assert part_of contributes ancestors. It does not call the
+    default relations.
     """
     both, is_a_only = None, None
     for term in ontology.terms():

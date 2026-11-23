@@ -4,11 +4,8 @@ Enforce the two-layer package rule.
     shared/     layer 0 -- imports nothing from a stage package, ever
     <stage>/    layer 1 -- never imports another stage at MODULE scope
 
-WHY THIS IS A TEST AND NOT A CONVENTION. It was a convention, and it decayed:
-`shared/dimred.py` imported `integration.hvg` at module scope, and
-`mapping/doublets.py` did the same, because `hvg.py` had been filed in
-the integration package despite depending on nothing from it. Both were fixed on
-2026-08-06 by moving it to `shared/hvg.py`. Nothing would have caught them.
+A test rather than a convention, because as a convention it decayed (`hvg.py`
+was once filed under integration and imported from shared/ and mapping/).
 
 WHY MODULE SCOPE IS THE LINE. Each stage runs in its OWN conda environment with
 an incompatible dependency set (scMappingV3.12, scIntegrationV1.12,
@@ -184,9 +181,8 @@ def test_every_package_is_importable_as_a_package():
     """
     Each package carries an `__init__.py`.
 
-    Five of the seven were implicit namespace packages until 2026-08-06, which
-    works for `python -m` from the repo root and fails in most other contexts --
-    including pytest's own collection, which is how this file would break.
+    An implicit namespace package works for `python -m` from the repo root but
+    fails in most other contexts, including pytest's own collection.
     """
     missing = [p for p in ALL_PKGS if not (REPO_ROOT / p / '__init__.py').exists()]
     assert not missing, 'missing __init__.py in: {}'.format(', '.join(missing))

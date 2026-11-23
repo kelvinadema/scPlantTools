@@ -1,7 +1,6 @@
 """
 External labels for the cluster-dependent methods -- `--labels-tsv`
-(`markerid/markers.py::MarkerRun._attach_external_labels`, added 2026-09-13
-for chapter 3's marker session).
+(`markerid/markers.py::MarkerRun._attach_external_labels`).
 
 The point of the option: a marker table computed on a DECLARED label set (a
 refine output, a chapter's reviewed label file) rather than whichever Leiden

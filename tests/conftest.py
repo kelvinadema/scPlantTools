@@ -1,23 +1,13 @@
 """
 Shared test configuration.
 
-DELIBERATELY IMPORTS NOTHING FROM THE PIPELINE. pytest imports this before
-collecting anything, so a heavy import here would break collection in every
-environment that lacks the dependency -- and the whole point of the directory
-split below is that different subtrees need different environments.
+Imports nothing from the pipeline: pytest loads this before collection, and
+each test subtree needs a different environment (see docs/testing.md).
 
-    tests/portable/     stdlib + shared/ only. Runs in ANY pipeline env.
-    tests/mapping/      needs scMappingV3.12
-    tests/integration/  needs scIntegrationV1.12
-    tests/annotation/   needs scAnnotationV3.12
-
-WHY DIRECTORIES AND NOT MARKERS. A module-scope `import mapping.qc_filter` fails
-at COLLECTION time in the wrong environment, and a collection error fails the
-whole run rather than one file. `pytest.importorskip` would avoid that, but then
-running in the wrong env silently skips a whole tier and still prints green --
-worse than failing. Directories make the omission structural: `python -m sc test`
-iterates them explicitly and reports per environment, so "all passed" means all
-of them actually ran.
+Directories, not markers, separate the environments. A module-scope import of
+the wrong stage fails at collection and fails the whole run; `importorskip`
+would instead skip a whole tier silently and still print green. `python -m sc
+test` runs each directory in its own env, so "all passed" means all of them ran.
 """
 
 from __future__ import annotations

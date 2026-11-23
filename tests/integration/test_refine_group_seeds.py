@@ -1,7 +1,6 @@
 """
 Seed quantile scope for the combined refine run --
-`refine.labels._group_assignment(..., quantile_scope=)` (added 2026-09-14 for
-chapter 3's C2 addendum).
+`refine.labels._group_assignment(..., quantile_scope=)`.
 
 The case that motivated it: a review group unites two genesets (two clusters)
 whose z-scores live on different scales. Under the original `group` scope the

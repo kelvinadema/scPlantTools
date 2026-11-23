@@ -1,25 +1,16 @@
 """
 Fixtures for the mapping-stage tests. Requires `scMappingV3.12`.
 
-THE HARNESS. `FilterQCMetrics.__init__` takes (sample_name, sample_base_dir,
-sample_config, filter_config_path) and reads a sample sheet and filter config off
-disk. The filter methods themselves need almost none of that: across
-`_mad_filter`, `_gmm_filter`, `_miqc_filter`, `_iforest_filter`,
-`_regression_filter` and their helpers, the only attributes read are
+`FilterQCMetrics.__init__` reads a sample sheet and filter config off disk,
+which the filter methods do not need. `filter_instance` therefore builds the
+object with `object.__new__` and sets only the attributes the filters read
+(adata, adata_view, filter_cfg, filter_profile, logger, transformed_features),
+keeping these tests about the filters rather than config plumbing (covered by
+tests/portable/test_config_resolution.py).
 
-    adata  adata_view  filter_cfg  filter_profile  logger  transformed_features
-    MAX_PLAUSIBLE_FLAG_FRACTION   (a class constant)
-
-so `filter_instance` builds the object with `object.__new__` and sets exactly
-those. That keeps the tests about the filters rather than about config plumbing,
-which `tests/portable/test_config_resolution.py` already covers.
-
-`adata_view` is set explicitly to None rather than left absent. `adata_active`
-reads it with `getattr(self, 'adata_view', None)`, and its own docstring notes
-the default never fires in production because every `_run_*_filter` assigns the
-attribute first -- so an isolated instance that omits it returns None and the
-filters silently operate on nothing. Setting it is what makes the harness behave
-like a mid-cascade instance.
+`adata_view` is set to None explicitly: in production every `_run_*_filter`
+assigns it before a filter runs, and an instance without it would make the
+filters operate on nothing.
 """
 
 from __future__ import annotations
