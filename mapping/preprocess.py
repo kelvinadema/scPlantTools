@@ -17,9 +17,8 @@ from scipy.io import mmread
 
 # CellBender is deliberately NOT imported here. It pins torch and does not install
 # on this stage's interpreter (broadinstitute/CellBender #371, #386, #395), so it
-# lives in its own environment and is invoked as a subprocess -- which is how it
-# was always actually run; only the output reader coupled it to this process.
-# See ProcessMappingResults._read_cellbender_output.
+# lives in its own environment and is invoked as a subprocess, output reader
+# included. See ProcessMappingResults._read_cellbender_output.
 
 class ProcessMappingResults():
     """Turn one sample's mapper output into an AnnData, then remove ambient RNA."""
@@ -51,8 +50,7 @@ class ProcessMappingResults():
         _read_cellbender_output). Falls back to whatever is on PATH, which only
         works if cellbender happens to share this interpreter.
 
-        Returns:
-            (binary, python): python is None when the env prefix is not configured.
+        Returns (binary, python); python is None when no env prefix is configured.
         """
         env = self.cellbender_cfg.get('env') or os.environ.get('CELLBENDER_ENV')
         if not env:
@@ -77,11 +75,8 @@ class ProcessMappingResults():
     def process(self, force: bool=False):
         """Read the mapper's matrices, build the AnnData, and run CellBender.
 
-        Args:
-            force (bool): Re-run even if `preprocessing.done` exists.
-
-        Returns:
-            AnnData: The corrected object.
+        Returns the corrected object, or None when skipped because
+        `preprocessing.done` exists (unless `force`).
         """
         done_path = self.paths['done'] / 'preprocessing.done'
         if done_path.exists() and not force:
@@ -107,17 +102,7 @@ class ProcessMappingResults():
 
 
     def _load_count_matrix(self, matrix_dir: Path, matrix_file='matrix.mtx', barcodes_file='barcodes.tsv', genes_file='genes.tsv'):
-        """Read one Matrix Market triple into a matrix plus its axes.
-
-        Args:
-            matrix_dir (Path): Directory holding the three files.
-            matrix_file (str): Matrix filename.
-            barcodes_file (str): Barcode list filename.
-            genes_file (str): Gene list filename.
-
-        Returns:
-            tuple: (matrix, barcodes, genes).
-        """
+        """Read one Matrix Market triple from `matrix_dir`; returns (CSR matrix, barcodes, genes)."""
         
         self.logger.info('[PREPROCESS] Loading matrices from "{}"'.format(matrix_dir))
         
@@ -140,7 +125,10 @@ class ProcessMappingResults():
 
     
     def _check_align_matrices(self, **named_matrices):
-        """Pad every layer to a common shape so they can share one AnnData."""
+        """Pad every layer to a common shape so they can share one AnnData.
+
+        Returns ({name: padded matrix}, {name: whether it was empty}).
+        """
         matrices = list(named_matrices.values())
         names = list(named_matrices.keys())
 
@@ -164,15 +152,7 @@ class ProcessMappingResults():
 
     
     def _pad_rows(self, mtx, target_rows: int):
-        """Zero-pad a matrix to `target_rows`.
-
-        Args:
-            mtx: The matrix.
-            target_rows (int): Required row count.
-
-        Returns:
-            The padded matrix.
-        """
+        """Zero-pad a matrix to `target_rows`."""
         if mtx.shape[0] < target_rows:
             pad = target_rows - mtx.shape[0]
             return sp.vstack([mtx, sp.csr_matrix((pad, mtx.shape[1]))])
@@ -180,15 +160,7 @@ class ProcessMappingResults():
 
 
     def _pad_cols(self, mtx, target_cols: int):
-        """Zero-pad a matrix to `target_cols`.
-
-        Args:
-            mtx: The matrix.
-            target_cols (int): Required column count.
-
-        Returns:
-            The padded matrix.
-        """
+        """Zero-pad a matrix to `target_cols`."""
         if mtx.shape[1] < target_cols:
             pad = target_cols - mtx.shape[1]
             return sp.hstack([mtx, sp.csr_matrix((mtx.shape[0], target_cols - mtx.shape[1]))])
@@ -196,17 +168,7 @@ class ProcessMappingResults():
 
 
     def _build_adata(self, x, barcodes, genes, layers: dict = None):
-        """Assemble an AnnData from a matrix, its axes and any extra layers.
-
-        Args:
-            x: The primary matrix.
-            barcodes (list[str]): Cell axis.
-            genes (list[str]): Gene axis.
-            layers (dict, optional): Further same-shape matrices.
-
-        Returns:
-            AnnData: The assembled object.
-        """
+        """Assemble an AnnData from a matrix, its axes and any same-shape extra layers."""
         self.logger.debug('[PREPROCESS] [DEBUG] Count matrix shape: {}'.format(x.shape))
         self.logger.debug('[PREPROCESS] [DEBUG] # barcodes: {}'.format(len(barcodes)))
         self.logger.debug('[PREPROCESS] [DEBUG] # genes: {}'.format(len(genes)))
@@ -221,13 +183,8 @@ class ProcessMappingResults():
     def _is_usa_mode(self, meta_path: Path):
         """Whether this alevin run produced a USA-mode matrix.
 
-        Read from `af_quant/quant.json` rather than inferred from the shape.
-
-        Args:
-            meta_path (Path): The quant JSON.
-
-        Returns:
-            bool: True when USA mode.
+        Read from `af_quant/quant.json` rather than inferred from the shape. An
+        unreadable file is logged and treated as not USA mode.
         """
         try:
             with open(meta_path) as f:
@@ -241,8 +198,7 @@ class ProcessMappingResults():
     def _process_alevin(self):
         """Read alevin-fry output, splitting a USA matrix into its three layers.
 
-        Returns:
-            AnnData: The assembled object.
+        Returns None (after logging an error) when `af_quant/quant.json` is missing.
         """
         af_path = self.paths['base']
         meta_path = af_path/'af_quant/quant.json'
@@ -280,7 +236,8 @@ class ProcessMappingResults():
     @log_exceptions()
     def _load_alevin_usa_matrix(self, af_path: Path):
         """
-        Load Alevin-fry USA-mode matrix and return AnnData with spliced, unspliced, and ambiguous layers.
+        Load an alevin-fry USA-mode matrix: layers spliced, unspliced, ambiguous,
+        and the resolved rspliced/runspliced, with `.X` = rspliced + runspliced.
         """
         mtx_path = af_path/'af_quant/alevin'
         x, bc, genes_full = self._load_count_matrix(mtx_path, 'quants_mat.mtx', 'quants_mat_rows.txt', 'quants_mat_cols.txt')
@@ -308,11 +265,7 @@ class ProcessMappingResults():
 
 
     def _process_kb(self):
-        """Read kb output into an AnnData.
-
-        Returns:
-            AnnData: The assembled object.
-        """
+        """Read kb output into an AnnData."""
         kb_path = self.paths['base']
         workflow = self.mapping_args.get('extra_mapping_args', [])
         if '--workflow' in workflow:
@@ -369,11 +322,7 @@ class ProcessMappingResults():
 
 
     def _proces_starsolo(self):
-        """Read STARsolo output into an AnnData.
-
-        Returns:
-            AnnData: The assembled object.
-        """
+        """Read STARsolo output into an AnnData."""
         ss_path = self.paths['base']
         workflow = self.mapping_args.get('extra_mapping_args', [])
         if '--soloFeatures' in workflow:
@@ -394,14 +343,7 @@ class ProcessMappingResults():
 
     @log_exceptions()
     def _load_starsolo_gene(self, solo_path: Path):
-        """Read STARsolo's Gene matrix.
-
-        Args:
-            solo_path (Path): The Solo.out directory.
-
-        Returns:
-            tuple: (matrix, barcodes, genes).
-        """
+        """Read STARsolo's Gene matrix into an AnnData (under `solo_path/Solo.out`)."""
         mtx_path = solo_path/'Solo.out/Gene/raw'
 
         x, bc, genes = self._load_count_matrix(mtx_path, 'matrix.mtx', 'barcodes.tsv', 'features.tsv')
@@ -416,14 +358,7 @@ class ProcessMappingResults():
 
     @log_exceptions()
     def _load_starsolo_genefull(self, solo_path: Path):
-        """Read STARsolo's GeneFull matrix.
-
-        Args:
-            solo_path (Path): The Solo.out directory.
-
-        Returns:
-            tuple: (matrix, barcodes, genes).
-        """
+        """Read STARsolo's GeneFull spliced/unspliced matrices into an AnnData, `.X` = their sum."""
         mtx_path = solo_path/'Solo.out/GeneFull/raw'
 
         s, bc, genes = self._load_count_matrix(mtx_path, 'spliced.mtx', 'barcodes.tsv', 'features.tsv')
@@ -439,14 +374,8 @@ class ProcessMappingResults():
 
     @log_exceptions()
     def _load_starsolo_velocyto(self, solo_path: Path):
-        """Read STARsolo's Velocyto spliced/unspliced/ambiguous matrices.
-
-        Args:
-            solo_path (Path): The Solo.out directory.
-
-        Returns:
-            dict: Layer name to matrix.
-        """
+        """Read STARsolo's Velocyto spliced/unspliced/ambiguous matrices into an AnnData,
+        resolving the ambiguous reads as for alevin USA mode."""
         mtx_path = solo_path/'Solo.out/Velocyto/raw'
 
         s, bc, genes = self._load_count_matrix(mtx_path, 'spliced.mtx', 'barcodes.tsv', 'features.tsv')
@@ -497,8 +426,13 @@ class ProcessMappingResults():
 
     def _resolve_with_fallbacks(self, spliced, unspliced, ambiguous, gene_ratios, global_ratio, sample_type):
         """
-        Vectorized resolution of ambiguous reads with sparse-safe operations.
-        Ensures total reads are preserved and avoids double-counting.
+        Split ambiguous reads into spliced/unspliced parts, preserving totals.
+
+        The main path uses each cell-gene's own spliced share. Ambiguous-only
+        entries (no spliced or unspliced reads there) use the gene's share,
+        falling back to the global share where the gene's is 0; if the global
+        share is undefined, protoplasts get 1.0 (spliced) and other sample
+        types 0.0. Returns (ambiguous spliced part, ambiguous unspliced part).
         """
 
         # --- Step 1: per-cell-per-gene ratios (main path) ---
@@ -555,9 +489,9 @@ class ProcessMappingResults():
     def _resolve_ambiguous_reads(self, u, s, a):
         """
         Resolve ambiguous reads into spliced/unspliced counts.
-        Stores results in:
-          - adata.layers["resolved_spliced"]
-          - adata.layers["resolved_unspliced"]
+
+        Returns (resolved spliced, resolved unspliced); callers store them as the
+        'rspliced'/'runspliced' layers. Asserts that no read is lost.
         """
         checked_mtx, flags = self._check_align_matrices(spliced=s, unspliced=u, ambiguous=a)
         spliced, unspliced, ambiguous = checked_mtx['spliced'], checked_mtx['unspliced'], checked_mtx['ambiguous']
@@ -568,10 +502,9 @@ class ProcessMappingResults():
 
         gene_ratios = self._compute_gene_ratios(spliced, unspliced)
         global_ratio = self._compute_global_ratio(spliced, unspliced)
-        # Same resolved value used everywhere else in this class (default
-        # 'protoplast'). Reading self.sample_cfg with a "" default here would make
-        # an unset sample_type fall to the nuclei branch (ratio 0.0) in
-        # _resolve_with_fallbacks while the rest of the code treats it as protoplast.
+        # The class-wide resolved value (default 'protoplast'), so an unset
+        # sample_type does not fall to the nuclei branch (ratio 0.0) here while
+        # the rest of the code treats it as protoplast.
         sample_type = self.sample_type
 
         # Resolve ambiguous
@@ -598,7 +531,7 @@ class ProcessMappingResults():
         stage only has to read an h5ad.
 
         Falls back to importing cellbender directly when no env is configured,
-        which is the old behaviour and only works if it shares this interpreter.
+        which only works if it shares this interpreter.
         """
         if cb_python is None:
             from cellbender.remove_background.downstream import anndata_from_h5
@@ -621,14 +554,11 @@ class ProcessMappingResults():
     def _remove_ambient(self, adata, input_layer: str=None, use_cuda: bool=True, learning_rate: float = 5e-5, inplace: bool=True):
         """Run CellBender on an in-memory AnnData object and reintegrate results.
 
-        Parameters:
-            adata (AnnData): In-memory AnnData object to correct
-            input_layer (str): Use this layer instead of .X as input (optional)
-            use_cuda (bool): Run on GPU
-            inplace (bool): Overwrite .X with corrected data, store original in .layers['raw_counts']
-
-        Returns:
-            AnnData: Corrected object
+        With `inplace` (the default), the original `.X` goes to
+        `.layers['raw_counts']`, the corrected counts to `.X` and
+        `.layers['corrected_counts']`, and the object is written as
+        `{sample}_qcfilters.h5ad`. `cellbender_cfg` overrides `use_cuda` and
+        `learning_rate`.
         """
 
         tmp_input = self.paths['raw'] / '_temp_cb_input.h5ad'
@@ -654,17 +584,12 @@ class ProcessMappingResults():
             cmd.append('--cuda')
         cmd += [str(a) for a in self.cellbender_cfg.get('extra_args', [])]
         self.logger.info('[PREPROCESSING] Running: {}'.format(' '.join(cmd)))
-        # CellBender's periodic/final training checkpoint (`ckpt.tar.gz`) has no
-        # CLI flag to redirect -- `--checkpoint` only names an *input* tarball to
-        # resume from (args.input_checkpoint_tarball); the file it actually
-        # writes during/after training is hardcoded to the literal name
-        # 'ckpt.tar.gz' in run_inference's default arg (cellbender/remove_background
-        # /run.py), resolved relative to the process's cwd. Without this, that cwd
-        # is whatever directory `python -m mapping.main` was launched
-        # from (the repo root), so every sample's run would dump a multi-GB
-        # ckpt.tar.gz there. Running CellBender with cwd set to this sample's own
-        # processed_matrices/ dir keeps it alongside cb_output's other siblings,
-        # where _cleanup_cellbender_temp below already removes it on success.
+        # CellBender writes its training checkpoint as 'ckpt.tar.gz' relative to
+        # the process cwd (hardcoded in cellbender/remove_background/run.py;
+        # `--checkpoint` only names an input tarball to resume from). Running it
+        # in this sample's processed_matrices/ keeps that multi-GB file out of
+        # the repo root and next to cb_output, where _cleanup_cellbender_temp
+        # removes it on success.
         run_cmd(cmd, cwd=str(self.paths['processed']))
 
         # Integrate output
@@ -706,10 +631,8 @@ class ProcessMappingResults():
         run's temp files are left in place, since they are the only record of
         what CellBender was given and produced.
 
-        `ckpt.tar.gz` doesn't share `cb_output`'s stem (its name is hardcoded
-        by CellBender, see the comment at the call site above) so the glob
-        below wouldn't otherwise catch it; it lands in `cb_output.parent`
-        because that's the cwd the CellBender subprocess was run with.
+        `ckpt.tar.gz` does not share `cb_output`'s stem, so it is listed
+        explicitly (see the comment at the call site for why it is there).
         """
         removed = []
         candidates = ([tmp_input, cb_output.parent / 'ckpt.tar.gz']

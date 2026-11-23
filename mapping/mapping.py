@@ -29,11 +29,9 @@ class SingleCellMapper:
 
         self.logger = logging.getLogger('SingleCellMappingPipeline')
 
-        # Merge configs
         self._merge_mapper_defaults()
         self._merge_technology_overrides()
 
-        # Validate index path
         self.index_info = self._resolve_index()    
 
     @log_exceptions()
@@ -62,19 +60,12 @@ class SingleCellMapper:
 
         for key, val in mapper_entry.items():
             # `is None` matches _merge_mapper_defaults above: a key written with
-            # no value counts as unset. The two layers used to disagree on this,
-            # so an empty `chemistry:` was honoured here but overridden there.
+            # no value counts as unset in both layers.
             if key not in self.config or self.config[key] is None:
                 self.config[key] = val
 
     def _run_alevin(self, min_reads: int = 10, resolution: str = 'cr-like', threads: int = 16):
-        """Dispatch to the BD or standard alevin path for this technology.
-
-        Args:
-            min_reads (int): simpleaf `--min-reads`.
-            resolution (str): UMI resolution strategy.
-            threads (int): Worker threads.
-        """
+        """Dispatch to the BD or standard alevin path for this technology."""
         tech = self.config.get('tech', '')
         # BD Rhapsody is the one special case: its cell label is three barcode
         # blocks split by GTGA/GACA linkers, so the per-block whitelists must be
@@ -97,8 +88,7 @@ class SingleCellMapper:
 
         Resolution goes through shared.samples.resolve_index_ref so this and
         main.build_required_index cannot disagree about which index a sample
-        needs -- they used to implement the lookup separately, and a sample-level
-        `index_ref:` override was honoured here but ignored when building.
+        needs, including a sample-level `index_ref:` override.
         """
         index_ref = resolve_index_ref(self.config, self.mapper_config)
         if not index_ref:
@@ -114,13 +104,7 @@ class SingleCellMapper:
         return index_entry
 
     def _run_alevin_bd(self, min_reads: int, resolution: str, threads: int) -> None:        
-        """Map BD Rhapsody reads, preparing its split-barcode whitelist first.
-
-        Args:
-            min_reads (int): simpleaf `--min-reads`.
-            resolution (str): UMI resolution strategy.
-            threads (int): Worker threads.
-        """
+        """Map BD Rhapsody reads, preparing its split-barcode whitelist first."""
         fq1 = ",".join(self.config["fastq1"])
         fq2 = ",".join(self.config["fastq2"])
         bdprepper = BDDataPrepper(self.config)
@@ -128,13 +112,7 @@ class SingleCellMapper:
         self._run_simpleaf_quant(fq1=fq1, fq2=fq2, min_reads=min_reads, resolution=resolution,threads=threads, extra_args=extra_args)
 
     def _run_alevin_standard(self, min_reads: int, resolution: str, threads: int) -> None:
-        """Map reads with a single-block whitelist chemistry.
-
-        Args:
-            min_reads (int): simpleaf `--min-reads`.
-            resolution (str): UMI resolution strategy.
-            threads (int): Worker threads.
-        """
+        """Map reads with a single-block whitelist chemistry."""
         # Standard single-whitelist chemistries (10x v2/v3, DNBelab C4): the
         # geometry string and the --unfiltered-pl whitelist come straight from the
         # technology_config entry, with no per-block merging (that is BD-only).
@@ -144,16 +122,7 @@ class SingleCellMapper:
         self._run_simpleaf_quant(fq1, fq2, min_reads, resolution, threads, extra_args)
 
     def _run_simpleaf_quant(self, fq1: str, fq2: str, min_reads: int, resolution: str, threads: int, extra_args: list) -> None:
-        """Invoke `simpleaf quant`, staging its work directory on node-local scratch.
-
-        Args:
-            fq1 (list[str]): R1 paths.
-            fq2 (list[str]): R2 paths.
-            min_reads (int): simpleaf `--min-reads`.
-            resolution (str): UMI resolution strategy.
-            threads (int): Worker threads.
-            extra_args (list[str], optional): Passed through untouched.
-        """
+        """Invoke `simpleaf quant` on comma-joined R1/R2 paths; `extra_args` pass through untouched."""
         # Targets simpleaf >= 0.16, where piscem is the default and --use-piscem
         # no longer exists (pass --no-piscem via extra_mapping_args to opt out).
         cmd = [
@@ -175,12 +144,7 @@ class SingleCellMapper:
 
     @log_exceptions()
     def _run_kallisto_bustools(self, threads: int=16, workflow: str = 'standard') -> None:
-        """Map reads with kb. Gated at the entrypoint; not implemented end to end.
-
-        Args:
-            threads (int): Worker threads.
-            workflow (str): kb workflow name.
-        """
+        """Map reads with kb. Gated at the entrypoint; not implemented end to end."""
         fqs = [i for pair in zip(self.config["fastq1"], self.config["fastq2"]) for i in pair]
 
         cmd = [
@@ -201,11 +165,7 @@ class SingleCellMapper:
 
     @log_exceptions()
     def _run_starsolo(self, threads: int=16) -> None:
-        """Map reads with STARsolo. Gated at the entrypoint; not implemented end to end.
-
-        Args:
-            threads (int): Worker threads.
-        """
+        """Map reads with STARsolo. Gated at the entrypoint; not implemented end to end."""
         fq1 = ",".join(self.config["fastq1"])
         fq2 = ",".join(self.config["fastq2"])
 
@@ -230,11 +190,7 @@ class SingleCellMapper:
 
     @log_exceptions()
     def run(self, force: bool=False) -> None:
-        """Map this sample, unless `mapping.done` says it is already done.
-
-        Args:
-            force (bool): Re-run even if the sentinel exists.
-        """
+        """Map this sample, unless `mapping.done` exists and `force` is False."""
         done_path = self.paths['done'] / 'mapping.done'
         if done_path.exists() and not force:
             self.logger.info('[MAPPING] skipping sample {}; mapping.done exists (use --force-mapping to override)'.format(self.sample_name))

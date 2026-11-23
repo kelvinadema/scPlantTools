@@ -54,11 +54,10 @@ class BDDataPrepper():
 
     @log_exceptions()
     def _merge_cls_files(self, cls_files: List[str], outfn: Path) -> list:
-        """Concatenate the per-block whitelist files into one.
+        """Merge the per-block whitelist files into one under `whitelistdir`.
 
-        Args:
-            cls_files (list[Path]): The block files.
-            outfn (Path): Where to write.
+        Returns the merged file's path, reusing an existing one; returns None if
+        the block files cannot be parsed.
         """
         outfn = self.whitelistdir / outfn
         if outfn.exists():
@@ -75,13 +74,7 @@ class BDDataPrepper():
             return None
 
     def _cartesian_product(self, files, output_file, delimiter = '') -> str:
-        """Write every combination of the blocks' barcodes, one per line.
-
-        Args:
-            files (list[Path]): One file per block.
-            output_file (Path): Where to write.
-            delimiter (str): Joins the per-block segments.
-        """
+        """Write every combination of the blocks' barcodes, one per line."""
         lists = []
         for file in files:
             with open(file, 'r') as f:
@@ -93,17 +86,11 @@ class BDDataPrepper():
                 out.write(delimiter.join(combo) + '\n')
 
     def PrepBDMapping(self):
-        """Produce the whitelist simpleaf needs for this chemistry.
-
-        Returns:
-            Path: The generated whitelist.
-        """
+        """`extra_mapping_args` with the `--unfiltered-pl` block files replaced by the merged whitelist."""
         extra_args = list(self.tech_config.get("extra_mapping_args", []))
-            # Get CLS files
         idx = extra_args.index('--unfiltered-pl')
         cls_arg = extra_args[idx + 1]
         cls_files = cls_arg.strip().split()
-            # Merge CLS files
         outfn = self._merge_cls_files(cls_files = cls_files, outfn = 'BD_CLSmerged.txt')
         extra_args[idx + 1] = str(outfn)
         return extra_args
@@ -124,11 +111,7 @@ class StatsExtractor():
 
     @log_exceptions()
     def _count_fastq_reads(self) -> int:
-        """Total reads across this sample's FASTQs.
-
-        Returns:
-            int: Read count.
-        """
+        """Total reads across this sample's R1 FASTQs."""
         total = 0
         for path in self.fqpaths:
             opener = gzip.open if path.endswith(".gz") else open
@@ -139,22 +122,14 @@ class StatsExtractor():
 
     @log_exceptions()
     def _get_alevin_stats(self):
-        """Mapping statistics from alevin-fry's own JSON output.
-
-        Returns:
-            dict: Statistic name to value.
-        """
+        """Mapping statistics from alevin-fry's own JSON output."""
         info_path = self.paths['base'] / 'af_map' / 'map_info.json'
         info = load_json_file(info_path)
         return {"total_reads_mapped": info.get("num_mapped"), "total_valid_reads": info.get("num_reads")}
 
     @log_exceptions()
     def _get_kb_stats(self):
-        """Mapping statistics from kb's run info.
-
-        Returns:
-            dict: Statistic name to value.
-        """
+        """Mapping statistics from kb's run info (kb is gated; not implemented end to end)."""
         inspect_path = self.paths['base'] / 'inspect.json'
         inspect = load_json_file(inspect_path)
         runinfo_path = self.paths['base'] / 'run_info.json'
@@ -167,20 +142,12 @@ class StatsExtractor():
 
     @log_exceptions()
     def _get_starsolo_stats(self):
-        """Mapping statistics from STARsolo's summary files.
-
-        Returns:
-            dict: Statistic name to value.
-        """
+        """Placeholder for STARsolo's summary statistics; not implemented (STARsolo is gated)."""
         pass
 
     @log_exceptions()
     def _get_umi_stats(self):
-        """Per-cell UMI and gene counts from the processed matrix.
-
-        Returns:
-            dict: Statistic name to value.
-        """
+        """Count totals from the processed matrix, per layer when spliced/unspliced exist."""
         stats = {}
         adata = sc.read_h5ad(self.adata_path)
         if all(k in adata.layers for k in ["spliced", "unspliced"]):
@@ -201,11 +168,7 @@ class StatsExtractor():
 
 
     def _get_mapping_stats(self) -> dict:
-        """Dispatch to this sample's mapper and collect its statistics.
-
-        Returns:
-            dict: Statistic name to value.
-        """
+        """Dispatch to this sample's mapper and collect its statistics."""
         if self.mapper == "alevin":
             mapper_stats = self._get_alevin_stats()
         elif self.mapper =='kb':
@@ -224,14 +187,10 @@ class StatsExtractor():
 
     def _plot_sankey(self, stats, save: bool=True):
         """
-        Sankey-style read-flow diagram, replacing the old two stacked bar
-        charts (_plot_mapping_stats / _plot_read_distribution). No Sankey
-        library is available in this env (plotly/pySankey/holoviews/bokeh/
-        graphviz all fail to import here) and plotnine has no bezier/curve
-        geom, so this is hand-drawn with raw matplotlib's Path/PathPatch
-        cubic-Bezier machinery -- a deliberate, scoped exception to this
-        codebase's plotnine-only plotting convention, justified because this
-        one figure is a custom flow diagram rather than a statistical plot.
+        Sankey-style read-flow diagram. No Sankey library is available in this
+        env and plotnine has no curve geom, so it is drawn with matplotlib's
+        Path/PathPatch Bezier machinery -- a deliberate, scoped exception to the
+        plotnine-only plotting convention for this one custom flow diagram.
 
         Every "loss" branch (Unmapped, Non-informative, Ambient-removed) is an
         exact number from `stats`. The final Spliced/Unspliced/Ambiguous split
@@ -374,11 +333,7 @@ class StatsExtractor():
         return round(pct, n_digits) if n_digits is not None else pct
 
     def _write_mapping_stats(self, stats):
-        """Write MappingStats.tsv.
-
-        Args:
-            stats (dict): Statistic name to value.
-        """
+        """Write MappingStats.tsv."""
         total_valid = stats['total_valid_reads']
         informative = stats.get('total', 0)
         mapped = stats.get('total_reads_mapped', 0)
@@ -422,11 +377,7 @@ class StatsExtractor():
         df.to_csv(Path(self.out_dir, 'MappingStats.tsv'), sep='\t', index=False)
 
     def report_stats(self, force: bool=False):
-        """Collect the statistics, write the TSV and draw the read-flow figure.
-
-        Args:
-            force (bool): Re-run even if `mappingstats.done` exists.
-        """
+        """Collect the statistics, write the TSV and draw the read-flow figure, unless `mappingstats.done` exists."""
         done_path = self.paths['done'] / 'mappingstats.done'
         if done_path.exists() and not force:
             self.logger.info('[MAPPING] skipping sample "{}"; mappingstats.done exists (use --force-mapextraction to override)'.format(self.sample_name))

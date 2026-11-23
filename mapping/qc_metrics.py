@@ -55,11 +55,7 @@ class ComputeQCMetrics():
 
     # Assign metric to specific functions
     def _get_metric_dispatchers(self):
-        """Map each configurable metric name to the method that computes it.
-
-        Returns:
-            dict: {metric name: callable}.
-        """
+        """Map each configurable metric name to its key in `_metric_handlers`."""
         return {
             "mitochondrial_fraction": "feature_fraction",
             "chloroplast_fraction": "feature_fraction",
@@ -76,12 +72,7 @@ class ComputeQCMetrics():
         }
 
     def _handle_feature_fraction(self, metric_name: str, config: dict):
-        """Compute a fraction-of-counts metric for a named gene set.
-
-        Args:
-            metric_name (str): Metric key from qc_config.yaml.
-            config (dict): That metric's config block.
-        """
+        """Compute a fraction-of-counts metric for a gene set selected from the GTF."""
         label = metric_name.replace("_fraction", "")
         geneset = self._get_genes_from_gtf(
             attribute=config.get("gtf_attribute", "gene_id"),
@@ -92,12 +83,7 @@ class ComputeQCMetrics():
         self._feature_fraction(label, geneset, layer=layer)
 
     def _handle_layer_fraction(self, metric_name: str, config: dict):
-        """Compute one layer's share of the counts across a set of layers.
-
-        Args:
-            metric_name (str): Metric key from qc_config.yaml.
-            config (dict): That metric's config block.
-        """
+        """Compute one layer's share of the counts across a set of layers."""
         layer_num = config.get("numerator", None)
         layer_denom = config.get("denominator", None)
         def ensure_list(x):
@@ -119,8 +105,7 @@ class ComputeQCMetrics():
         Look genes up in the GTF, reusing one parser across metrics.
 
         Each GTFparser opens a gffutils sqlite DB and every lookup scans all gene
-        features, so building one per metric meant four opens and four full scans
-        per sample -- and none of them were ever closed. get_qc_metrics closes this.
+        features, so one parser is shared; get_qc_metrics closes it.
         """
         if getattr(self, '_gtf_parser', None) is None:
             self._gtf_parser = GTFparser(self.gtf_path)
@@ -137,9 +122,7 @@ class ComputeQCMetrics():
         """
         Return the subset of var_names matching `genes` (a list of ids, or a prefix).
 
-        Always returns a list, so callers can use `if not matched`. The prefix
-        branch previously returned a boolean array, which would have raised
-        "truth value of an array is ambiguous" in _feature_fraction.
+        Always returns a list, so callers can use `if not matched`.
         """
         if isinstance(genes, list):
             # set membership: `gene in genes` on a list made this O(n_var * n_genes)
@@ -151,33 +134,17 @@ class ComputeQCMetrics():
             raise ValueError('Pattern must be a list of gene names or a prefix string')
 
     def _safe_sum(self, X):
-        """Row sums as a flat array, sparse or dense.
-
-        Args:
-            X: The matrix.
-
-        Returns:
-            np.ndarray: One total per cell.
-        """
+        """Row sums as a flat array, sparse or dense."""
         total = X.sum(axis=1)
         return total.A1 if hasattr(total, "A1") else np.asarray(total).flatten()
 
     @property
     def _matrices(self):
-        """The matrices this sample carries, keyed by layer name.
-
-        Returns:
-            dict: {layer name: matrix}, including `.X`.
-        """
+        """The matrices this sample carries, keyed by layer name, `.X` as 'X'."""
         return {**self.adata.layers, "X": self.adata.X}
 
     def _iterate_layers(self, layers, callback):
-        """Run `callback` for each requested layer that exists.
-
-        Args:
-            layers (list[str]): Layer names.
-            callback (callable): Called with (layer name, matrix).
-        """
+        """Call `callback(layer name, matrix)` for each requested layer that exists."""
         for layer in layers:
             if layer in self._matrices and self._matrices[layer] is not None:
                 callback(layer, self._matrices[layer])
@@ -187,13 +154,8 @@ class ComputeQCMetrics():
 
     @log_exceptions()
     def _feature_fraction(self, label: str, genes: list, layer: str='X'):
-        """Fraction of a layer's counts falling in `genes`, per cell.
-
-        Args:
-            label (str): Names the `.obs` column written.
-            genes (list[str]): Gene names forming the set.
-            layer (str): Layer to compute over.
-        """
+        """Fraction of a layer's counts falling in `genes`, per cell, as
+        `.obs['{label}_fraction_{layer}']`; NaN for cells with no counts."""
         matched = self._match_genes(genes)
         if not matched:
             self.logger.warning(f'[QC] No genes matched for {label}')
@@ -218,13 +180,9 @@ class ComputeQCMetrics():
         """
         Fraction of counts contributed by `numerator` relative to `denominator`.
 
-        Args:
-            numerator: layer name, or list of layer names to sum.
-            denominator: layer name, or list of layer names to sum.
-            mask_with_zero: False to disable; True to mask on 'corrected_counts';
-                or a layer name. Cells with no counts in that layer get NaN.
-                (Defaulted to 'corrected_counts' before, which no caller ever used
-                -- _handle_layer_fraction passes config's value, default False.)
+        Each is a layer name or a list of layer names to sum. `mask_with_zero`:
+        False to disable; True to mask on 'corrected_counts'; or a layer name.
+        Cells with no counts in that layer get NaN.
         """
         def get_total(layers):
             """Summed counts across the named layers, per cell."""
@@ -281,11 +239,9 @@ class ComputeQCMetrics():
     def _cell_sparsity(self, min_gene_count: int = 1, min_cells: int = 1, layer: str='X'):
         """
         Compute cell-wise sparsity: 1 - (# expressed genes in cell / # expressed genes in dataset).
-        A gene is considered expressed if it is detected in at least min_cells with at least min_gene_count counts.
 
-        Args:
-            min_gene_count (int): Minimum count to consider a gene expressed in a cell.
-            min_cells (int): Minimum number of cells a gene must be expressed in to be considered expressed in the dataset.
+        A gene is expressed in a cell at >= `min_gene_count` counts, and expressed
+        in the dataset if that holds in >= `min_cells` cells.
         """
         # Get the count matrix (cells x genes)
         X = self._matrices.get(layer, self.adata.X)
@@ -314,7 +270,7 @@ class ComputeQCMetrics():
     @log_exceptions()
     def _cell_complexity(self, layer: str='X'):
         """
-        Compute cell complexity for each cell: (# genes detected in cell) / (total # genes in dataset).
+        Compute cell complexity for each cell: (# genes detected in cell) / (total counts in cell).
         """
         # Add genes per cell to adata.obs
         self._n_genes_per_cell(layers=[layer])
@@ -328,11 +284,10 @@ class ComputeQCMetrics():
     @log_exceptions()
     def _total_counts_per_cell(self, layers=None):
         """
-        Compute total UMI counts per cell for each specified layer.
-        Adds '{layer}_total_counts' to self.adata.obs for each layer.
-        If layers is None, computes for .X (raw counts).
-        Args:
-            layers (list or None): List of layer names to compute totals for. If None, uses .X only.
+        Compute total counts per cell for each layer, or for .X when `layers` is None.
+
+        Stores 'total_counts' (for .X) or '{layer}_total_counts' in .obs, skipping
+        a key that is already present.
         """
         def compute(layer_name, X_layer):
             """Write one layer's total counts per cell."""
@@ -375,11 +330,8 @@ class ComputeQCMetrics():
         """
         Shannon entropy (bits) of each cell's count distribution, per layer.
 
-        Rows are normalised to sum to 1 directly rather than by round-tripping
-        through a full AnnData copy: the previous version copied the entire object
-        -- every other layer included -- once per layer just to reuse
-        sc.pp.normalize_total, then accumulated the entropy in a Python loop over
-        every non-zero entry.
+        Rows are normalised to sum to 1 directly (cells with no counts stay 0, as
+        with sc.pp.normalize_total) rather than through a copy of the AnnData.
         """
         def compute(layer_name, X_layer):
             """Write one layer's per-cell expression entropy."""
@@ -420,9 +372,9 @@ class ComputeQCMetrics():
     @log_exceptions()
     def _fraction_top_n_genes(self, n=50, layers=None):
         """
-        Compute the fraction of counts in the top N most highly expressed genes for each cell.
-        Sparse-safe version: works efficiently with both dense and sparse matrices.
-        Stores result in .obs as 'fraction_top{n}' or '{layer}_fraction_top{n}'.
+        Compute the fraction of counts in each cell's top N genes; NaN for cells with no counts.
+
+        Stores 'fraction_top{n}' (for .X) or '{layer}_fraction_top{n}' in .obs.
         """
         def compute(layer_name, X):
             """Write the share of a cell's counts held by its top N genes."""
@@ -457,25 +409,14 @@ class ComputeQCMetrics():
             compute('X', self.adata.X)
 
     def _is_enabled(self, key) -> bool:
-        """Whether a metric is switched on in qc_config.yaml.
-
-        Args:
-            key (str): Metric name.
-
-        Returns:
-            bool: Whether to compute it.
-        """
+        """Whether a metric is switched on in qc_config.yaml."""
         return self.metrics.get(key, {}).get("enabled", False)
 
     @log_exceptions()
     def get_qc_metrics(self, force: bool = False):
-        """Compute every enabled metric and write the annotated object.
+        """Compute every enabled metric and write the annotated `_qcfilters.h5ad`.
 
-        Args:
-            force (bool): Re-run even if `qcmetrics.done` exists.
-
-        Returns:
-            AnnData: The object with QC columns in `.obs`.
+        Skipped when `qcmetrics.done` exists, unless `force`.
         """
         self.logger.info(f"[QC] Starting QC computation for {self.sample_name}")
         done_path = self.paths["done"] / "qcmetrics.done"

@@ -63,13 +63,7 @@ def as_list(value) -> list:
     """Coerce a `.uns` sequence field to a plain list.
 
     anndata round-trips a list stored in `.uns` as a numpy array, so `value or []`
-    raises on its truthiness. Convert first, test after.
-
-    Args:
-        value: The `.uns` field.
-
-    Returns:
-        list: The values, or [] when absent.
+    raises on its truthiness. Convert first, test after. None gives [].
     """
     if value is None:
         return []
@@ -84,12 +78,6 @@ def _qc_features(uns_qc: dict) -> set:
     someone can reason about. Reads `source_feature` in preference to `feature`, so
     a MAD entry keyed by a transformed column contributes the raw one a person can
     set a bound on.
-
-    Args:
-        uns_qc (dict): The `.uns['qc']` mapping.
-
-    Returns:
-        set[str]: Column names worth offering.
     """
     wanted = set()
     for method, entry in (uns_qc or {}).items():
@@ -116,14 +104,7 @@ def _numeric_features(obs: pd.DataFrame, uns_qc: dict = None) -> list:
     back to every numeric column when they are not, so an artifact predating
     `source_feature` still gets a usable panel. Transformed columns are excluded
     either way -- offering both spaces side by side is how someone types a raw
-    fraction into a logit-scaled control.
-
-    Args:
-        obs (pandas.DataFrame): The `.obs` frame.
-        uns_qc (dict, optional): The `.uns['qc']` mapping.
-
-    Returns:
-        list[str]: Column names, sorted.
+    fraction into a logit-scaled control. Returns column names, sorted.
     """
     wanted = _qc_features(uns_qc) if uns_qc else set()
     out = []
@@ -140,41 +121,25 @@ def _numeric_features(obs: pd.DataFrame, uns_qc: dict = None) -> list:
 
 
 def _clean(values) -> list:
-    """JSON-safe floats: NaN/inf become null, which the page renders as 'not assessed'.
-
-    Args:
-        values: Numeric sequence.
-
-    Returns:
-        list: Rounded floats and Nones.
-    """
+    """JSON-safe rounded floats: NaN/inf become null, which the page renders as 'not assessed'."""
     arr = np.asarray(values, dtype=float)
     return [None if not np.isfinite(v) else round(float(v), 6) for v in arr]
 
 
 def build_payload(adata, sample: str, config_hash: str = '') -> dict:
-    """Assemble everything the page needs. Pure read; nothing is recomputed.
+    """Assemble everything the page needs from the pre-filter object. Pure read.
 
-    Args:
-        adata (AnnData): The pre-filter object, usually opened backed.
-        sample (str): Sample name.
-        config_hash (str): Stamped into the payload so a decision file can be tied
-            to the config that produced the cells it addresses.
-
-    Returns:
-        dict: Features, embeddings, clusterings, bounds and QC plot specs.
+    `config_hash` is stamped into the payload so a decision file can be tied to
+    the config that produced the cells it addresses.
     """
     obs = adata.obs
     uns_qc = adata.uns.get('qc', {})
     features = _numeric_features(obs, uns_qc)
 
     # The plots are built first because they decide what data has to ship.
-    # `_HIDDEN_PREFIXES` keeps transformed columns out of any *chooser*, which is
-    # right -- nobody sets a cut-off in logit units. But the regression figure is
-    # plotted in exactly that transformed space (log counts vs log genes), so
-    # excluding those columns from the payload left its canvas blank: the plot
-    # was offered and had no data behind it. Anything a plot names is carried,
-    # whether or not it is offerable on its own.
+    # `_HIDDEN_PREFIXES` keeps transformed columns out of any *chooser*, but the
+    # regression figure is plotted in that transformed space (log counts vs log
+    # genes), so anything a plot names is carried, offerable or not.
     plots = _qc_plots(uns_qc, obs, _automatic_bounds(uns_qc, None))
     for pl in plots:
         for axis in (pl.get('x'), pl.get('y')):
@@ -274,14 +239,6 @@ def _qc_plots(uns_qc: dict, obs, bounds: dict) -> list:
     regression fit* and wants to select on that, not on a generic histogram.
     `kind` drives the interaction: 'hist' gets a draggable cut-off, 'scatter' gets
     lasso selection, since a joint fit has no single axis to threshold on.
-
-    Args:
-        uns_qc (dict): The `.uns['qc']` mapping.
-        obs (pandas.DataFrame): The `.obs` frame.
-        bounds (dict): As returned by `_automatic_bounds`.
-
-    Returns:
-        list[dict]: One spec per panel.
     """
     out = []
 
@@ -399,13 +356,8 @@ def _automatic_bounds(uns_qc: dict, features=None) -> dict:
     regression, GMM, iForest and DoD are absent by design, being joint fits that a
     cut on one input does not supersede.
 
-    Args:
-        uns_qc (dict): The `.uns['qc']` mapping.
-        features (set[str], optional): Restrict to these raw features.
-
-    Returns:
-        dict: {raw feature: [{'method', 'flag_col', 'exec_mode', 'downgraded',
-            'lower', 'upper'}, ...]}.
+    Returns {raw feature: [{'method', 'flag_col', 'exec_mode', 'downgraded',
+    'lower', 'upper'}, ...]}, optionally restricted to `features`.
     """
     out = {}
     for method, entry in (uns_qc or {}).items():
@@ -436,14 +388,7 @@ def _raw_bounds(method: str, meta: dict):
 
     MAD's adaptive bounds live in transformed space, so they are inverted back --
     a line drawn at the logit value would sit in completely the wrong place on a
-    raw axis.
-
-    Args:
-        method (str): Filter name.
-        meta (dict): That method's `.uns['qc']` entry.
-
-    Returns:
-        tuple: (lower, upper), either possibly None.
+    raw axis. Returns (lower, upper), either possibly None.
     """
     if method == 'bcrank':
         t = meta.get('threshold')
@@ -462,14 +407,8 @@ def _raw_bounds(method: str, meta: dict):
 
 
 def _bcrank_curve(obs: pd.DataFrame, uns_qc: dict, max_points: int = 4000) -> dict:
-    """The barcode-rank curve and its knee, downsampled for the page.
-
-    Args:
-        uns_qc (dict): The `.uns['qc']` mapping.
-
-    Returns:
-        dict or None: Curve points and threshold, or None when bcrank did not run.
-    """
+    """The barcode-rank curve and its knee, downsampled to `max_points` for the
+    page; {} when bcrank did not run or has no usable counts."""
     entry = (uns_qc or {}).get('bcrank') or {}
     metas = [v for v in entry.values() if isinstance(v, dict)] if entry else []
     meta = next((m for m in metas if not m.get('skipped')), None)
@@ -502,14 +441,7 @@ def _bcrank_curve(obs: pd.DataFrame, uns_qc: dict, max_points: int = 4000) -> di
 
 
 def _method_advisory(uns_qc: dict, method: str) -> bool:
-    """Map each method to whether it removed cells.
-
-    Args:
-        uns_qc (dict): The `.uns['qc']` mapping.
-
-    Returns:
-        dict: {method: bool}.
-    """
+    """Whether `method`'s recorded exec_mode is non-'filter' (it removed no cells)."""
     entry = (uns_qc or {}).get(method)
     if not isinstance(entry, dict):
         return False
@@ -522,15 +454,10 @@ def _method_advisory(uns_qc: dict, method: str) -> bool:
 
 
 def _doublet_venn(obs: pd.DataFrame, uns_qc: dict) -> dict:
-    """Overlap between the doublet callers that ran, for the page's Venn panel.
+    """SOLO/Scrublet call overlap among cells both scored, for the page's Venn panel.
 
-    Args:
-        obs (pandas.DataFrame): The `.obs` frame.
-        uns_qc (dict): The `.uns['qc']` mapping.
-
-    Returns:
-        dict or None: Set sizes and their intersections, or None when fewer than
-            two callers produced a flag column.
+    {} unless both callers' flag and score columns exist and at least one cell
+    was called.
     """
     needed = ('flag_solo', 'flag_scrublet', 'solo_doublet_score', 'scrublet_doublet_score')
     if not all(c in obs.columns for c in needed):
@@ -1606,14 +1533,7 @@ _JS = r"""
 
 
 def render_section(payload: dict) -> str:
-    """Render the interactive section's HTML from a payload.
-
-    Args:
-        payload (dict): As returned by `build_payload`.
-
-    Returns:
-        str: HTML fragment, with the payload inlined as JSON.
-    """
+    """Render the interactive section's HTML, with the payload inlined as JSON."""
     if not payload.get('embeddings') and not payload.get('features'):
         return ('<h2>Interactive review</h2><p class="note">No embedding or numeric QC feature '
                 'is available in this artifact, so there is nothing to select on. Embeddings are '

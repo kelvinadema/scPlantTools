@@ -81,14 +81,7 @@ class DetectDoublets():
                  'doublet_consensus': 'consensus_cfg'}
 
     def _mode(self, method: str = 'solo') -> str:
-        """This method's configured execution mode.
-
-        Args:
-            method (str): Doublet method name.
-
-        Returns:
-            str: 'off', 'advisory' or 'filter'.
-        """
+        """This method's configured execution mode: 'off', 'advisory' or 'filter'."""
         cfg = getattr(self, self._MODE_CFG[method])
         mode = cfg.get('mode', 'off')
         if mode not in FILTER_MODES:
@@ -100,13 +93,8 @@ class DetectDoublets():
     def _effective_mode(self, method: str, quality_flagged: bool):
         """Resolve a method's effective mode after the sample_quality downgrade.
 
-        Args:
-            method (str): Doublet method name.
-            quality_flagged (bool): Whether sample_quality flagged this sample.
-
-        Returns:
-            tuple: (mode (str), downgrade_reason (str)). Reason is empty when nothing
-                was downgraded.
+        Returns (mode, downgrade_reason); the reason is empty when nothing was
+        downgraded.
         """
         configured = self._mode(method)
         if quality_flagged and configured == 'filter':
@@ -121,9 +109,6 @@ class DetectDoublets():
 
         scvi-tools cannot be installed alongside the mapping stage, so the worker runs
         out of process. See docs/decisions/doublet-detection.md.
-
-        Returns:
-            str: Path to that env's `bin/python`.
         """
         env = os.environ.get('DOUBLET_ENV') or self.doublet_cfg.get('env')
         if not env:
@@ -142,12 +127,8 @@ class DetectDoublets():
                 downgrade_reason: str = '') -> None:
         """Write `.uns['qc'][method]`, stamping the effective exec_mode.
 
-        Args:
-            adata (AnnData): Object to record into.
-            method (str): Doublet method name.
-            metadata (dict): Method-specific record.
-            mode (str): Effective mode, which may differ from the configured one.
-            downgrade_reason (str): Why it differs, or empty.
+        `mode` is the effective mode; where it differs from the configured one,
+        `downgrade_reason` (or a generic reason) is recorded with it.
         """
         if 'qc' not in adata.uns:
             adata.uns['qc'] = {}
@@ -162,13 +143,7 @@ class DetectDoublets():
         adata.uns['qc'][method] = metadata
 
     def _skip(self, adata, method: str, reason: str) -> None:
-        """Record a skip in the shape every other filter uses.
-
-        Args:
-            adata (AnnData): Object to record into.
-            method (str): Doublet method name.
-            reason (str): Why the method did not run.
-        """
+        """Record a skip in the shape every other filter uses."""
         self.logger.warning('[DOUBLETS] Skipping {} for sample "{}": {}'.format(
             method, self.sample_name, reason))
         self._record(adata, method, {'skipped': True, 'skip_reason': reason, 'features': []},
@@ -178,12 +153,6 @@ class DetectDoublets():
         """Boolean mask of cells the model should train on.
 
         Reuses the cascade's own verdict: flags of every method in exec_mode 'filter'.
-
-        Args:
-            adata (AnnData): Object carrying the cascade's flags.
-
-        Returns:
-            np.ndarray: Boolean mask over `adata.obs_names`.
         """
         keep = np.ones(adata.n_obs, dtype=bool)
         for flag in collect_removal_flags(adata.uns.get('qc', {})):
@@ -200,11 +169,7 @@ class DetectDoublets():
     _OWNED_UNS = ('solo', 'scrublet', 'doublet_consensus')
 
     def _clear_previous(self, adata) -> None:
-        """Drop any doublet columns and records left by an earlier run.
-
-        Args:
-            adata (AnnData): Object to clean, modified in place.
-        """
+        """Drop any doublet columns and records left by an earlier run, in place."""
         qc = adata.uns.get('qc') or {}
         for key in self._OWNED_UNS:
             qc.pop(key, None)
@@ -221,12 +186,8 @@ class DetectDoublets():
     def run(self, force: bool=False):
         """Run every enabled doublet method for this sample.
 
-        Args:
-            force (bool): Re-run even if the done flag is present.
-
-        Returns:
-            str or None: None if detection completed or was deliberately skipped; a
-                failure reason if the SOLO worker faulted. Only a fault fails the run.
+        Returns None if detection completed or was deliberately skipped, or the
+        failure reason if the SOLO worker faulted. Only a fault fails the run.
         """
         done_path = self.paths['done'] / 'doublets.done'
         if done_path.exists() and not force:
@@ -349,15 +310,8 @@ class DetectDoublets():
         return None
 
     def _select_hvgs(self, sub, n_hvg):
-        """Select genes for the doublet model using the consensus HVG selector.
-
-        Args:
-            sub (AnnData): Counts for the cells the model will train on.
-            n_hvg (int): Number of genes to select.
-
-        Returns:
-            list[str]: Selected gene names.
-        """
+        """`sub` restricted to `n_hvg` genes chosen by the consensus HVG selector
+        (cached per sample), falling back to the highest-variance log1p genes."""
         outfn = self.qc_dir / '{}_doublet_hvg_consensus.tsv'.format(self.sample_name)
 
         cached = load_cached_hvg(sub, outfn, n_hvg, self.logger)
@@ -380,7 +334,7 @@ class DetectDoublets():
         return sub[:, np.sort(order)].copy()
 
     def _run_worker(self, adata, train_mask):
-        """Run the SOLO worker subprocess and return its parsed summary."""
+        """Run the SOLO worker subprocess; returns (parsed summary, per-cell results)."""
         layer = self.doublet_cfg.get('layer', 'raw_counts')
         n_hvg = int(self.doublet_cfg.get('hvg_n_top_genes', 2000))
 
@@ -491,12 +445,6 @@ class DetectDoublets():
         Architecture keys come from the worker summary, not the config: with `tune`
         enabled the search space picks them. `params_source` records which branch
         produced them.
-
-        Args:
-            summary (dict): Worker summary.
-
-        Returns:
-            dict: Parameter record.
         """
         reported = summary.get('model_params') or {}
         record = {
@@ -541,15 +489,10 @@ class DetectDoublets():
         Fits a 2-component Gaussian mixture and cuts at the Bayes boundary rather than
         using SOLO's fixed 0.5. See docs/decisions/doublet-detection.md.
 
-        Args:
-            scores (np.ndarray): Doublet probabilities in [0, 1].
-            default (float): Fallback threshold if no valley is found.
-            cfg (dict, optional): Filter block supplying the min_component_* guards.
-                Defaults to the SOLO block.
-
-        Returns:
-            tuple: (threshold (float), diagnostics (dict)). Diagnostics record how the
-                cut was chosen, so a fallback is distinguishable from a real fit.
+        `default` is the fallback when no valley is found; `cfg` (default: the
+        SOLO block) supplies the min_component_* guards. Returns (threshold,
+        diagnostics); the diagnostics record how the cut was chosen, so a fallback
+        is distinguishable from a real fit.
         """
         cfg = self.solo_cfg if cfg is None else cfg
         min_sep = float(cfg.get('min_component_separation', 0.25))
@@ -596,12 +539,10 @@ class DetectDoublets():
 
     def _apply_solo(self, adata, results, summary: dict, mode: str, n_train: int,
                     downgrade_reason: str = '') -> None:
-        """Turn SOLO scores into flags and record them.
+        """Turn the worker's SOLO results into flags, the scVI UMAP/Leiden, and a record.
 
-        Args:
-            adata (AnnData): Object to flag and record into.
-            scores (pd.Series): Per-cell doublet probabilities.
-            mode (str): Configured mode.
+        `mode` is the effective mode; it is downgraded to advisory here if the
+        doublet rate exceeds `max_plausible_rate`.
         """
         index = adata.obs_names.astype(str)
         aligned = results.reindex(index)
@@ -714,15 +655,8 @@ class DetectDoublets():
         """Run Scrublet in-process on the QC-passed cells.
 
         Takes raw counts over all genes: Scrublet runs its own variability filter and
-        PCA internally.
-
-        Args:
-            adata (AnnData): Object holding the counts.
-            train_mask (np.ndarray): Cells to assess.
-
-        Returns:
-            tuple: (scores (pd.Series), None). The hard call is made by the shared
-                valley detector in `_apply_scrublet`.
+        PCA internally. Returns (scores, None): the second slot is always None, and
+        the hard call is made by the shared valley detector in `_apply_scrublet`.
         """
         cfg = self.scrublet_model_cfg
         layer = cfg.get('layer', self.doublet_cfg.get('layer', 'raw_counts'))
@@ -769,10 +703,8 @@ class DetectDoublets():
                         downgrade_reason: str = '') -> None:
         """Turn Scrublet scores into flags and record them.
 
-        Args:
-            adata (AnnData): Object to flag and record into.
-            scores (pd.Series): Per-cell doublet scores.
-            mode (str): Configured mode.
+        `mode` is the effective mode; it is downgraded to advisory here if the
+        flagged rate exceeds `max_plausible_rate`.
         """
         index = adata.obs_names.astype(str)
         aligned = scores.reindex(index)
@@ -784,9 +716,9 @@ class DetectDoublets():
         # methods speak one threshold language in the report.
         fixed = self.scrublet_cfg.get('doublet_threshold')
         if fixed is None:
-            # Prefer Scrublet's own auto cut as the fallback, else a conservative
-            # default: when the valley fit is not trusted we want to under-call,
-            # not fabricate doublets.
+            # Scrublet's own cut if one was returned (_run_scrublet returns none),
+            # else a conservative default: when the valley fit is not trusted we
+            # want to under-call, not fabricate doublets.
             fixed = scr_suggested if scr_suggested is not None else 0.25
         fixed = float(fixed)
         if self.scrublet_cfg.get('auto_threshold', True):
@@ -848,11 +780,6 @@ class DetectDoublets():
 
         A cell is a consensus doublet only where both methods assessed it and both
         called it. Cells either method did not assess are False.
-
-        Args:
-            adata (AnnData): Object to flag and record into.
-            mode (str): Configured mode.
-            downgrade_reason (str): Why the mode was downgraded, or empty.
         """
         solo = adata.obs['flag_solo'].fillna(False).astype(bool)
         scr = adata.obs['flag_scrublet'].fillna(False).astype(bool)
@@ -885,21 +812,13 @@ class DetectDoublets():
         """Write the object without marking the step done.
 
         Used on the SOLO fault path so the next run retries.
-
-        Args:
-            adata (AnnData): Object to write.
         """
         write_h5ad(adata, self.adata_path,
                    sample=self.sample_name, mapper=self.mapper, stage='doublets',
                    config_paths=self.config_paths)
 
     def _write(self, adata, done_path: Path) -> None:
-        """Write the object and mark the step done.
-
-        Args:
-            adata (AnnData): Object to write.
-            done_path (Path): Done-flag path.
-        """
+        """Write the object and mark the step done."""
         self._persist(adata)
         self.logger.info('[DOUBLETS] Wrote doublet results into "{}"'.format(self.adata_path))
         write_done_flag(done_path)

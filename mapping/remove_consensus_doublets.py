@@ -44,26 +44,13 @@ class ConsensusDoubletRemovalError(ValueError):
 
 def _remove_consensus_doublets(sample_name: str, pipeline_config_path, logger,
                                 sample_sheet_override=None) -> Path:
-    """Drop the cells both doublet callers agreed on, writing a new artifact.
-
-    Args:
-        sample_name (str): Sample name.
-        pipeline_config_path (Path): pipeline_config.yaml.
-        logger (logging.Logger): Where the progress lines go.
-        sample_sheet_override (Path, optional): Use this sheet instead of the
-            config's own.
-
-    Returns:
-        Path: The written artifact.
-    """
+    """Drop the cells both doublet callers agreed on; returns the written artifact path."""
     pipeline_cfg = load_config(pipeline_config_path) or {}
     if sample_sheet_override:
-        # pipeline_config.yaml's configs.samples names exactly one sheet, but a
-        # sample requested here may live in a different one (e.g. N0h in
-        # sample_metadata.yaml while configs.samples currently points at
-        # configs/external/external_metadata.yaml) -- see the memory note on
-        # this pointer flipping between internal/external. Explicit override
-        # rather than trusting whatever configs.samples happens to say.
+        # pipeline_config.yaml's configs.samples names exactly one sheet, and it
+        # may currently point at the internal or the external sample sheet, so a
+        # requested sample can live in the other one. An explicit sheet is used
+        # rather than trusting whichever one configs.samples names right now.
         sample_sheet = sample_sheet_override
     else:
         cfg = pipeline_cfg.get('configs') or {}
@@ -145,13 +132,7 @@ def _remove_consensus_doublets(sample_name: str, pipeline_config_path, logger,
 def main(config_path: str, samples: list, sample_sheet_override: str = None) -> int:
     """CLI entry point: remove consensus doublets from one or more samples.
 
-    Args:
-        config_path (Path): pipeline_config.yaml.
-        samples (list[str]): Samples to process.
-        sample_sheet_override (Path, optional): Sheet to resolve against.
-
-    Returns:
-        int: Process exit status.
+    Returns the number of samples that failed.
     """
     pipeline_cfg = load_config(config_path) or {}
     log_file = pipeline_log_path('remove_consensus_doublets', log_dir=pipeline_cfg.get('log_dir', 'logs'))

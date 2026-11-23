@@ -53,16 +53,8 @@ def _thin_breaks(candidates, forward, limits, n: int = 6):
     Greedy with a minimum gap rather than "nearest candidate to each of n evenly
     spaced targets": the latter picks candidates that are adjacent on the
     transformed axis, which on a logit axis renders as `0.00050010` -- two labels
-    printed on top of each other.
-
-    Args:
-        candidates (np.ndarray): Ascending candidate break values, in raw units.
-        forward (callable): The axis transform, applied to measure spacing.
-        limits (tuple): (lo, hi) of the axis, in raw units.
-        n (int): Maximum number of breaks.
-
-    Returns:
-        np.ndarray: The selected breaks.
+    printed on top of each other. `candidates` and `limits` are in raw units;
+    `forward` is the axis transform used to measure spacing.
     """
     lo, hi = min(limits), max(limits)
     sel = candidates[(candidates >= lo) & (candidates <= hi)]
@@ -85,13 +77,6 @@ def _fraction_breaks(limits, n: int = 6):
     Fixed rather than computed: the action is at 0.1% and 1%, and a generic break
     algorithm over logit space returns labels like 0.00734. See
     docs/decisions/qc-plot-axes.md.
-
-    Args:
-        limits (tuple): (lo, hi) of the axis, in raw units.
-        n (int): Maximum number of breaks.
-
-    Returns:
-        np.ndarray: The selected breaks.
     """
     return _thin_breaks(_FRACTION_BREAKS, _logit, limits, n)
 
@@ -102,13 +87,6 @@ def _count_breaks(limits, n: int = 6):
     mizani's `breaks_extended` works in data space and on a 200-2400 gene count
     returns just 1000 and 2000 -- two labels, both in the right-hand third. See
     docs/decisions/qc-plot-axes.md.
-
-    Args:
-        limits (tuple): (lo, hi) of the axis, in raw units.
-        n (int): Maximum number of breaks.
-
-    Returns:
-        np.ndarray: The selected breaks.
     """
     hi = max(limits)
     decades = [0.0]
@@ -197,15 +175,10 @@ class QCPlotter():
         Flattens the per-feature entries, stamping the feature name into each, and skips
         the sample-level verdicts in NON_FILTER_METHODS -- those are not filters and
         report.py renders them as their own banner.
-
-        Yields:
-            tuple: (method (str), metadata (dict)).
         """
         diag = self.adata.uns.get('qc', {})
         for method, entry in diag.items():
             if method in NON_FILTER_METHODS:
-                # A sample-level verdict, not a filter -- nothing to plot, and
-                # report.py renders it as its own banner instead of a table row.
                 continue
             if isinstance(entry, dict) and all(isinstance(v, dict) for v in entry.values()):
                 for subkey, metadata in entry.items():
@@ -220,14 +193,8 @@ class QCPlotter():
         """The AnnData view the given QC step actually saw.
 
         Each cascade step is seeded with the previous steps' flags, so a figure drawn
-        over the full object would show cells that step never assessed.
-
-        Args:
-            run_context (dict): The step's recorded context, carrying
-                'filtered_on_flags'.
-
-        Returns:
-            AnnData: `self.adata`, or a copy subset to the cells that step saw.
+        over the full object would show cells that step never assessed. Returns
+        `self.adata`, or a copy subset by the context's 'filtered_on_flags'.
         """
         filter_flags = list(run_context.get("filtered_on_flags", []))
 
@@ -242,30 +209,15 @@ class QCPlotter():
         return self.adata[valid].copy()
 
     def _save_plot(self, plot, name, prefix="plot", dpi=600, width=6, height=4):
-        """Write a figure to `{qc_dir}/{prefix}_{name}.png`.
-
-        Args:
-            plot (plotnine.ggplot): The figure.
-            name (str): Filename stem after the prefix.
-            prefix (str): Groups the figure in the report; see _FIGURE_PREFIXES.
-            dpi (int): Output resolution.
-            width (float): Inches.
-            height (float): Inches.
-        """
+        """Write a figure to `{qc_dir}/{prefix}_{name}.png`; `prefix` groups it in
+        the report (see _FIGURE_PREFIXES). Width and height are in inches."""
         filename = f"{self.qc_dir}/{prefix}_{name}.png"
         plot.save(filename=filename, dpi=dpi, width=width, height=height)
 
 
     def _plot_bcrank(self, metadata: dict, save: bool=True):
-        """Barcode-rank curve with the knee threshold marked.
-
-        Args:
-            metadata (dict): This method's `.uns['qc']` entry.
-            save (bool): Whether to write the PNG.
-
-        Returns:
-            plotnine.ggplot: The figure.
-        """
+        """Barcode-rank curve with the knee threshold marked; None if the stored
+        ranks no longer match the data."""
         input_col = metadata.get('feature')
         ranks = metadata.get("ranks")
         threshold = metadata.get("threshold")
@@ -345,13 +297,6 @@ class QCPlotter():
         distribution keeps its shape while the ticks stay in units a person can type
         back into the interactive panel. Also serves the fixed-cap 'absolute' method,
         which it branches on for title and prefix. See docs/decisions/qc-plot-axes.md.
-
-        Args:
-            metadata (dict): This method's `.uns['qc']` entry.
-            save (bool): Whether to write the PNG.
-
-        Returns:
-            plotnine.ggplot: The figure.
         """
         # `feature` is the column MAD worked on (transformed for the adaptive
         # entries); `source_feature` is the raw column behind it.
@@ -414,15 +359,7 @@ class QCPlotter():
         return p
 
     def _plot_regression(self, metadata: dict, save: bool=True):
-        """Residual scatter for the regression filter, with its threshold band.
-
-        Args:
-            metadata (dict): This method's `.uns['qc']` entry.
-            save (bool): Whether to write the PNG.
-
-        Returns:
-            plotnine.ggplot: The figure.
-        """
+        """Residual scatter for the regression filter, with its threshold band."""
         adata_view = self._get_plotting_view(metadata.get("run_context", {}))
 
         x_key, y_key = metadata["features"]
@@ -459,14 +396,8 @@ class QCPlotter():
         """miQC's (complexity, fraction) plane with the intact-component trend line.
 
         Handles a skipped entry itself: for miqc a skip is the common case, not an edge
-        case. See docs/decisions/qc-terminal-umap.md.
-
-        Args:
-            metadata (dict): This method's `.uns['qc']` entry.
-            save (bool): Whether to write the PNG.
-
-        Returns:
-            plotnine.ggplot: The figure.
+        case. See docs/decisions/qc-terminal-umap.md. Returns the scatter, plus
+        the posterior histogram when the entry was not skipped.
         """
         feature = metadata['feature']
         complexity_key = metadata['complexity_key']
@@ -519,15 +450,7 @@ class QCPlotter():
         return p, plot_posterior
 
     def _plot_solo(self, metadata: dict, save: bool=True):
-        """SOLO doublet-score distribution against its threshold.
-
-        Args:
-            metadata (dict): This method's `.uns['qc']` entry.
-            save (bool): Whether to write the PNG.
-
-        Returns:
-            plotnine.ggplot: The figure.
-        """
+        """SOLO score histogram and scVI UMAP; None if no cell carries a score."""
         score_col = metadata['score_column']
         flag_col = metadata['flag_col']
         threshold = metadata.get('threshold', 0.5)
@@ -567,15 +490,7 @@ class QCPlotter():
         return plot_score, plot_umap
 
     def _plot_scrublet(self, metadata: dict, save: bool=True):
-        """Scrublet doublet-score distribution against its threshold.
-
-        Args:
-            metadata (dict): This method's `.uns['qc']` entry.
-            save (bool): Whether to write the PNG.
-
-        Returns:
-            plotnine.ggplot: The figure.
-        """
+        """Scrublet score histogram and scVI UMAP; None if no cell carries a score."""
         score_col = metadata['score_column']
         flag_col = metadata['flag_col']
         threshold = metadata.get('threshold', 0.5)
@@ -615,15 +530,7 @@ class QCPlotter():
         return plot_score, plot_umap
 
     def _plot_consensus(self, metadata: dict, save: bool=True):
-        """Agreement between the doublet callers that ran.
-
-        Args:
-            metadata (dict): This method's `.uns['qc']` entry.
-            save (bool): Whether to write the PNG.
-
-        Returns:
-            plotnine.ggplot: The figure.
-        """
+        """scVI UMAP coloured by SOLO/Scrublet agreement; None if either caller is missing."""
         if 'X_umap_scVI' not in self.adata.obsm:
             return None
         for col in ('flag_solo', 'flag_scrublet', 'solo_doublet_score', 'scrublet_doublet_score'):
@@ -663,17 +570,8 @@ class QCPlotter():
         return plot_umap
 
     def _reduce_to_pca(self, adata, features: list, n_components: int = 2):
-        """Reduce `.obs` features to a few principal components.
-
-        Args:
-            adata (AnnData): Object to read features from.
-            features (list[str]): `.obs` columns to reduce.
-            n_components (int): Components to compute.
-
-        Returns:
-            tuple or None: (DataFrame of PCs joined to `.obs`, fitted PCA), or None if
-                fewer than three cells have finite values.
-        """
+        """(PCs joined to `.obs`, fitted PCA) for `.obs` features, or None if fewer
+        than three cells have finite values."""
         df = adata.obs[features].replace([np.inf, -np.inf], np.nan).dropna()
         if df.empty or df.shape[0] < 3:
             self.logger.warning('[QC filter] Too few valid cells or NaN values for PCA reduction')
@@ -689,19 +587,8 @@ class QCPlotter():
         return merged_df, pca
 
     def _plot_2D_projection(self, adata, features: list, color_by: str):
-        """Scatter of the first two PCs of `features`, coloured by `color_by`.
-
-        Args:
-            adata (AnnData): Object to read from.
-            features (list[str]): `.obs` columns to reduce.
-            color_by (str): `.obs` column to colour by.
-
-        Returns:
-            plotnine.ggplot or None: None if too few cells survive the PCA.
-
-        Raises:
-            ValueError: If `color_by` is not an `.obs` column.
-        """
+        """Scatter of the first two PCs of `features`, coloured by `color_by`
+        (ValueError if that is not an `.obs` column)."""
         pca_df, pca = self._reduce_to_pca(adata, features)
         if pca_df is None or pca_df.shape[0] < 3:
             self.logger.warning('[QC filter] Too few valid cells for PCA plotting')
@@ -721,20 +608,7 @@ class QCPlotter():
         return p
 
     def _plot_score_histogram(self, df, score_col: str, threshold: float, method_name: str = "QC Score"):
-        """Histogram of a score column with its threshold marked.
-
-        Args:
-            df (pandas.DataFrame): Frame carrying `score_col`.
-            score_col (str): Column to plot.
-            threshold (float): Where to draw the cut-off line.
-            method_name (str): Title prefix.
-
-        Returns:
-            plotnine.ggplot: The figure.
-
-        Raises:
-            ValueError: If `score_col` is not a column of `df`.
-        """
+        """Histogram of a score column with its threshold marked (ValueError if absent)."""
         if score_col not in df.columns:
             raise ValueError(f"Score column '{score_col}' not found in dataframe.")
 
@@ -753,18 +627,9 @@ class QCPlotter():
     def _plot_parallel(self, adata, features: list, outlier_col: str = None, cluster_col: str = None, score_col: str = None, threshold: float = None, color_by: str = None, title: str = None):
         """Parallel-coordinates plot of several QC features at once.
 
-        Args:
-            adata (AnnData): Object to read from.
-            features (list[str]): `.obs` columns forming the axes.
-            outlier_col (str, optional): Boolean `.obs` column to highlight.
-            cluster_col (str, optional): `.obs` column to group lines by.
-            score_col (str, optional): `.obs` column carrying a per-cell score.
-            threshold (float, optional): Cut-off on `score_col`.
-            color_by (str, optional): `.obs` column to colour by.
-            title (str, optional): Figure title.
-
-        Returns:
-            plotnine.ggplot or None: None if no feature is usable.
+        `outlier_col` (boolean) is highlighted in red, `cluster_col` facets the
+        median lines, `score_col` is added as an axis with an optional threshold.
+        Raises ValueError for any column absent from `.obs`.
         """
         all_features = list(features)
         if score_col and score_col not in all_features:
@@ -868,15 +733,7 @@ class QCPlotter():
 
 
     def _plot_gmm(self, metadata, save: bool=True):
-        """GMM component fit with the flagged cells marked.
-
-        Args:
-            metadata (dict): This method's `.uns['qc']` entry.
-            save (bool): Whether to write the PNG.
-
-        Returns:
-            plotnine.ggplot: The figure.
-        """
+        """GMM diagnostics: parallel coordinates, Mahalanobis histogram and 2-D PCA projections."""
         mahal_key = metadata["distance_col"]
         cluster_key = metadata["cluster_col"]
         flag_key = metadata["flag_col"]
@@ -904,15 +761,7 @@ class QCPlotter():
         return plot_cluster, plot_flags, plot_mahal, plot_parallel
 
     def _plot_iforest(self, metadata, save: bool=True):
-        """Isolation-forest score distribution against its contamination quota.
-
-        Args:
-            metadata (dict): This method's `.uns['qc']` entry.
-            save (bool): Whether to write the PNG.
-
-        Returns:
-            plotnine.ggplot: The figure.
-        """
+        """Isolation-forest score histogram and parallel coordinates."""
         adata_view = self._get_plotting_view(metadata.get("run_context", {}))
         score_col = metadata['score_column']
         threshold = metadata['threshold']
@@ -932,15 +781,7 @@ class QCPlotter():
         return plot_parallel
 
     def _plot_dod(self, metadata, save: bool=True):
-        """Distance-of-distance diagnostics: change, neighbourhood overlap, and their joint.
-
-        Args:
-            metadata (dict): This method's `.uns['qc']` entry.
-            save (bool): Whether to write the PNG.
-
-        Returns:
-            plotnine.ggplot: The figure.
-        """
+        """Distance-of-distance diagnostics: change, neighbourhood overlap, their joint, and UMAPs."""
         adata_view = self._get_plotting_view(metadata.get("run_context", {}))
 
         flag_col = metadata["flag_col"]
@@ -950,9 +791,6 @@ class QCPlotter():
 
         # Restrict to the cells the filter actually ran on: _zscore_features drops
         # NaN/inf rows, so the DoD matrices were built on a subset of this view.
-        # (The previous `obs_names.isin(self.adata.obs_names)` mask was always all
-        # True, since a view is by definition a subset, and so never realigned
-        # anything.)
         usable = adata_view.obs[features].replace([np.inf, -np.inf], np.nan).dropna().index
         sub = adata_view[usable]
 
@@ -968,10 +806,9 @@ class QCPlotter():
             X, k=metadata.get('k', 15), logger=self.logger,
             max_cells=metadata.get('max_cells', MAX_DOD_CELLS))
 
-        # Raw-distance and DoD-transformed UMAPs: no leiden (never requested at
-        # these two call sites, only a color-by-flag scatter on the full cell
-        # set DoD ran on). Fresh .copy() per call, matching the old _plot_umap's
-        # own copy-before-mutating behaviour -- `sub` itself is a view.
+        # Raw-distance and DoD-transformed UMAPs: no leiden, only a colour-by-flag
+        # scatter on the cells DoD ran on. A fresh .copy() per call, since `sub`
+        # is a view.
         sub_raw = sub.copy()
         keys_raw = DimReducer(sub_raw, self.logger).compute(
             distances=d_raw, key='dod_raw', do_leiden=False, metric='euclidean')
@@ -986,10 +823,7 @@ class QCPlotter():
             umap_key=keys_dod['umap_key'], leiden_key=None, color=flags,
             title_prefix="UMAP (distance of distance)", save=False)[0]
 
-        # Filtered (post-flag-removal) UMAPs: cluster the surviving cells, once
-        # on the same z-scored QC-feature space DoD itself used, and once on
-        # corrected_counts gene expression -- matching the old two raw_mtx=
-        # calls, both of which excluded flagged cells before embedding.
+        # Filtered UMAP: the surviving cells, on the same QC-feature space DoD used.
         sub_filt = sub[~flags].copy()
         sub_filt.obsm['X_qc_features'] = sub_filt.obs[features].to_numpy()
         keys_filt = DimReducer(sub_filt, self.logger).compute(
@@ -998,14 +832,8 @@ class QCPlotter():
             umap_key=keys_filt['umap_key'], leiden_key=keys_filt['leiden_key'],
             title_prefix="UMAP (Filtered)", save=False)[0]
 
-        # No gene-expression UMAP here. There used to be one -- corrected_counts
-        # on the DoD-surviving cells -- but it is not a DoD diagnostic: it is a
-        # second copy of the final UMAP that run() already produces, and it was
-        # the reason consensus HVG selection (eight ranking methods, the slowest
-        # step in this path) ran twice per sample. The three plots below are the
-        # ones that actually say something about DoD: the embedding under raw
-        # distances, the same under the DoD transform, and the QC-feature space
-        # after its flags are applied.
+        # No gene-expression UMAP here: it would duplicate the final UMAP run()
+        # produces, and run consensus HVG selection (the slowest step) twice.
         plots = [
             self._plot_dod_change(dod_change, flags = flags),
             self._plot_dod_neighbourhood(overlap, flags = flags),
@@ -1019,15 +847,7 @@ class QCPlotter():
                     self._save_plot(p, name=n, prefix='DoD')
 
     def _plot_dod_change(self, delta: list, flags: list = None):
-        """Histogram of per-cell distance-of-distance change.
-
-        Args:
-            delta (list[float]): Per-cell change.
-            flags (list[bool], optional): Which cells were flagged.
-
-        Returns:
-            plotnine.ggplot: The figure.
-        """
+        """Histogram of per-cell distance-of-distance change, optionally split by flag."""
         df = pd.DataFrame({'DoD_change': delta})
         if flags is not None:
             df["flagged"] = np.array(flags)
@@ -1046,15 +866,7 @@ class QCPlotter():
         return p
 
     def _plot_dod_neighbourhood(self, overlaps: list, flags: list = None):
-        """Histogram of per-cell neighbourhood overlap before and after the transform.
-
-        Args:
-            overlaps (list[float]): Per-cell overlap fraction.
-            flags (list[bool], optional): Which cells were flagged.
-
-        Returns:
-            plotnine.ggplot: The figure.
-        """
+        """Histogram of per-cell neighbourhood overlap before and after the transform."""
         df = pd.DataFrame({'overlap': overlaps})
         if flags is not None:
             df["flagged"] = np.array(flags)
@@ -1073,16 +885,7 @@ class QCPlotter():
         return p
 
     def _plot_dod_vs_overlap(self, dod_change, overlap, flags: list = None):
-        """Distance-of-distance change against neighbourhood overlap, per cell.
-
-        Args:
-            dod_change (list[float]): Per-cell change.
-            overlap (list[float]): Per-cell overlap fraction.
-            flags (list[bool], optional): Which cells were flagged.
-
-        Returns:
-            plotnine.ggplot: The figure.
-        """
+        """Distance-of-distance change against neighbourhood overlap, per cell."""
         df = pd.DataFrame({'DoD_change': dod_change, 'overlap': overlap})
         if flags is not None:
             df["flagged"] = np.array(flags)
@@ -1106,10 +909,8 @@ class QCPlotter():
         Only methods whose effective mode is 'filter' contribute to the removal mask;
         advisory methods have recorded scores and a flag column for the report but
         remove nothing. The embedding is best-effort -- the artifact, metadata and
-        manifest are the contract. See docs/decisions/qc-terminal-umap.md.
-
-        Args:
-            force (bool): Re-run even if `qcplot.done` exists.
+        manifest are the contract. See docs/decisions/qc-terminal-umap.md. `force`
+        re-runs even if `qcplot.done` exists.
         """
         self.logger.info('[QC Plot] Plotting QC diagnostics for sample: {}'.format(self.sample_name))
         done_path = self.paths['done'] / 'qcplot.done'
@@ -1140,9 +941,7 @@ class QCPlotter():
             except Exception as e:
                 self.logger.error(f"[QCPlot] Failed to plot {method} → {e}")
 
-        # Write filtered object. Only methods that ran in exec_mode 'filter'
-        # contribute; advisory methods have recorded scores and a flag column
-        # for the report to render, but must not remove anything.
+        # Removal mask: exec_mode 'filter' flags only (see the docstring).
         keep_mask = np.ones(self.adata.n_obs, dtype=bool)
         flag_cols = collect_removal_flags(self.adata.uns.get("qc", {}))
         for flag in flag_cols:

@@ -70,14 +70,8 @@ def describe_threshold(method: str, meta: dict) -> str:
     """Render a method's threshold as HTML.
 
     Each filter stores this differently -- a dict, a bare float, a singular
-    'threshold', or nothing -- so there is no uniform accessor to lean on.
-
-    Args:
-        method (str): Filter name.
-        meta (dict): That method's `.uns['qc']` entry.
-
-    Returns:
-        str: HTML fragment, or an em dash when there is no threshold.
+    'threshold', or nothing -- so there is no uniform accessor to lean on. An em
+    dash when there is no threshold.
     """
     if method in ('bcrank', 'iforest'):
         return _fmt_float(meta.get('threshold'))
@@ -116,14 +110,8 @@ def describe_selection(method: str, meta: dict) -> str:
     """Explain how a method reached its threshold, where that is not self-evident.
 
     A barcode-rank cut-off is one of four candidates chosen by policy, and an
-    isolation-forest count is a quota rather than a finding.
-
-    Args:
-        method (str): Filter name.
-        meta (dict): That method's `.uns['qc']` entry.
-
-    Returns:
-        str: HTML fragment, or '' when the number speaks for itself.
+    isolation-forest count is a quota rather than a finding. '' when the number
+    speaks for itself.
     """
     if method == 'bcrank':
         candidates = meta.get('candidate_thresholds') or {}
@@ -215,13 +203,8 @@ def parse_diagnostics(uns_qc: dict) -> list:
     Mirrors `QCPlotter._parse_qc_diagnostics`. Reads only scalars -- bcrank's
     payload also carries full-length per-cell arrays that must never be rendered --
     and excludes NON_FILTER_METHODS, which are sample-level verdicts rendered as
-    banners. See docs/decisions/qc-report.md.
-
-    Args:
-        uns_qc (dict): The `.uns['qc']` mapping.
-
-    Returns:
-        list[tuple]: (method, feature, meta), in cascade order.
+    banners. Returns (method, feature, meta) tuples in cascade order. See
+    docs/decisions/qc-report.md.
     """
     records = []
     for method, entry in (uns_qc or {}).items():
@@ -301,15 +284,8 @@ _FIGURE_CAPTIONS = {
 
 
 def figure_caption(path, method: str = '') -> str:
-    """A caption for a QC figure, from `_FIGURE_CAPTIONS` where one is keyed.
-
-    Args:
-        path (Path): Figure path; its stem is the lookup key.
-        method (str): Filter that produced it.
-
-    Returns:
-        str: Escaped caption, falling back to the stem with spaces.
-    """
+    """A caption for a QC figure, keyed on its stem in `_FIGURE_CAPTIONS`, else
+    built per method, else the stem with spaces."""
     stem = Path(path).stem
     if stem in _FIGURE_CAPTIONS:
         return _FIGURE_CAPTIONS[stem]
@@ -352,13 +328,6 @@ def _umap_param_note(params: dict, intro: str = 'UMAP') -> str:
     Formatted from the `.uns['umap_params']` entry persisted by whichever stage
     computed the embedding, so the report stays a pure consumer. Renders nothing
     when the entry is absent, so a missing record is silent rather than a hole.
-
-    Args:
-        params (dict): One `umap_params` entry.
-        intro (str): Label for the settings line.
-
-    Returns:
-        str: HTML fragment, or ''.
     """
     if not params:
         return ''
@@ -407,13 +376,6 @@ def describe_view(meta: dict, n_input=None) -> str:
     become the surface for selecting cells by hand. Renders nothing when the method
     saw everything, rather than a reassuring "all cells" the data does not support.
     See docs/decisions/qc-report.md.
-
-    Args:
-        meta (dict): The method's `.uns['qc']` entry.
-        n_input (int, optional): Cells that entered QC.
-
-    Returns:
-        str: HTML fragment, or ''.
     """
     # anndata round-trips a .uns list as a numpy array, so `x or []` would raise
     # on its truthiness. Convert first, test after.
@@ -437,12 +399,6 @@ def is_advisory(meta: dict) -> bool:
 
     Absent exec_mode means 'filter', so artifacts written before execution modes
     existed read exactly as they did before.
-
-    Args:
-        meta (dict): A `.uns['qc']` entry.
-
-    Returns:
-        bool: Whether the method was advisory.
     """
     return (meta or {}).get('exec_mode', 'filter') != 'filter'
 
@@ -453,13 +409,8 @@ def cascade_stages(records: list) -> list:
     `n_flagged` is view-relative, so per-method counts cannot be summed or stacked;
     each stage's removal is reported against the cells that reached it. Advisory
     methods are excluded outright -- they would put non-removing rows in a removal
-    waterfall. See docs/decisions/qc-report.md.
-
-    Args:
-        records (list[tuple]): As returned by `parse_diagnostics`.
-
-    Returns:
-        list[dict]: One entry per stage, with 'method', 'depth' and 'features'.
+    waterfall. Returns one dict per stage ('method', 'depth', 'features'). See
+    docs/decisions/qc-report.md.
     """
     records = [r for r in records if not is_advisory(r[2])]
     stages = []
@@ -509,9 +460,7 @@ class ReportBuilder():
     def _load_artifacts(self):
         """Read back everything the report renders, without recomputing any of it.
 
-        Returns:
-            tuple: (provenance (dict), diagnostics (list), stats (DataFrame or None),
-                quality (dict)).
+        Returns (provenance, diagnostics, stats or None, quality).
         """
         adata = sc.read_h5ad(self.qc_dir / '{}_filtered.h5ad'.format(self.sample_name))
         provenance = dict(adata.uns.get('pipeline', {}))
@@ -539,13 +488,7 @@ class ReportBuilder():
         offer removal but never rescue -- and rescuing cells the cascade got wrong is
         half the point. Read `backed='r'`; the QC UMAP is merged in from the filtered
         object, since removed cells have no coordinates by construction. See
-        docs/decisions/qc-report.md.
-
-        Args:
-            provenance (dict): Carries the config hash stamped into the payload.
-
-        Returns:
-            dict or None: The payload, or None if the pre-filter object is absent.
+        docs/decisions/qc-report.md. None if the pre-filter object is absent.
         """
         parent = self.paths['processed'] / '{}_qcfilters.h5ad'.format(self.sample_name)
         if not parent.exists():
@@ -594,13 +537,8 @@ class ReportBuilder():
         """Render the sample_quality verdict as a standalone banner.
 
         Not a row in the generic filter table: it is the one diagnostic meant to change
-        how a human reads everything below it, so it needs to be seen first.
-
-        Args:
-            quality (dict): The `sample_quality` entry.
-
-        Returns:
-            str: HTML fragment, or '' when the sample was not flagged.
+        how a human reads everything below it, so it needs to be seen first. '' when
+        the sample was not flagged.
         """
         if not quality or not quality.get('flagged_for_manual_review'):
             return ''
@@ -650,14 +588,7 @@ class ReportBuilder():
            min_depth=_fmt_int(quality.get('min_median_depth')))
 
     def _section_header(self, provenance: dict) -> str:
-        """Sample title, headline counts, and the provenance disclosure.
-
-        Args:
-            provenance (dict): Schema version, timestamp, config hash, tool versions.
-
-        Returns:
-            str: HTML fragment.
-        """
+        """Sample title, headline counts, and the provenance disclosure."""
         n_in = provenance.get('n_cells_input')
         n_out = provenance.get('n_cells')
         n_genes = provenance.get('n_genes')
@@ -707,14 +638,7 @@ class ReportBuilder():
            versions=version_rows or '<tr><td colspan="2" class="missing">not recorded</td></tr>')
 
     def _section_mapping(self, stats) -> str:
-        """Render MappingStats.tsv as a table, or say it is unavailable.
-
-        Args:
-            stats (pandas.DataFrame or None): Parsed MappingStats.tsv.
-
-        Returns:
-            str: HTML fragment.
-        """
+        """Render MappingStats.tsv as a table, or say it is unavailable."""
         if stats is None or stats.empty:
             table = '<p class="missing">MappingStats.tsv not available.</p>'
         else:
@@ -747,16 +671,7 @@ class ReportBuilder():
         return '<h2>Mapping statistics</h2>{}{}'.format(table, figures)
 
     def _section_qc(self, provenance: dict, diagnostics: list, quality: dict) -> str:
-        """The QC cascade: removal waterfall, per-method detail table, and figures.
-
-        Args:
-            provenance (dict): Supplies the input cell count.
-            diagnostics (list[tuple]): As returned by `parse_diagnostics`.
-            quality (dict): The `sample_quality` entry.
-
-        Returns:
-            str: HTML fragment.
-        """
+        """The QC cascade: removal waterfall, per-method detail table, and figures."""
         if not diagnostics:
             return '<h2>Quality control</h2><p class="missing">No QC diagnostics recorded.</p>'
 
@@ -909,15 +824,7 @@ class ReportBuilder():
             figs=self._qc_figures(diagnostics, n_input=n_in))
 
     def _qc_figures(self, diagnostics: list, n_input=None) -> str:
-        """Every QC figure present on disk, grouped by method in cascade order.
-
-        Args:
-            diagnostics (list[tuple]): As returned by `parse_diagnostics`.
-            n_input (int, optional): Cells that entered QC, for the view note.
-
-        Returns:
-            str: HTML fragment.
-        """
+        """Every QC figure present on disk, grouped by method in cascade order."""
         seen, blocks = [], []
         for method, _, meta in diagnostics:
             if method in seen:
@@ -948,16 +855,11 @@ class ReportBuilder():
 
         'computed' is trusted only when the key exists: an artifact written before
         qc_plot recorded this has no entry, and defaulting to False would report every
-        older sample as skipped.
-
-        Args:
-            provenance (dict): Unused beyond keeping the section signatures uniform.
-
-        Returns:
-            str: HTML fragment.
+        older sample as skipped. `provenance` is unused; it keeps the section
+        signatures uniform.
         """
         # Say so, rather than rendering an empty figure slot that reads as a
-        # missing file. 'computed' is trusted only when the key exists.
+        # missing file.
         if self._umap_status and not self._umap_status.get('computed', True):
             reason = str(self._umap_status.get('skip_reason', '') or 'no reason recorded')
             return (
@@ -982,9 +884,6 @@ class ReportBuilder():
 
         Only fires for `failed`, never for a deliberate skip: a skip is the pipeline
         working as designed and a table row is the right weight for it.
-
-        Returns:
-            str: HTML fragment, or '' when SOLO did not fault.
         """
         solo = self._solo
         if not solo.get('failed'):
@@ -1001,11 +900,7 @@ class ReportBuilder():
                 html.escape(str(solo.get('failure_reason', 'no reason recorded'))))
 
     def _section_post_cascade_banner(self) -> str:
-        """Render what survived the whole cascade, as a banner.
-
-        Returns:
-            str: HTML fragment, or '' when nothing was recorded.
-        """
+        """Banner when too few cells survived the whole cascade; '' otherwise."""
         pc = self._post_cascade
         if not pc:
             return ''
@@ -1043,9 +938,6 @@ class ReportBuilder():
 
         Guarded on the config hash, since the figures another stage left in `qc/` may
         describe an older run.
-
-        Returns:
-            str: HTML fragment, or ''.
         """
         summary_path = self.qc_dir / '{}_scvi_summary.json'.format(self.sample_name)
         summary = {}
@@ -1068,9 +960,9 @@ class ReportBuilder():
         # flag, and are discovered by globbing -- so nothing here can tell a
         # figure computed from the current QC output from one an integration run
         # left behind weeks ago. Left unchecked the report presents stale scVI
-        # results as current, which is how a `plot_umap_solo_doublet_*.png` from
-        # a pre-refactor SOLO run ends up looking like this run's doublet calls.
-        # Compare the hash report_embedding.py stamps into the sidecar.
+        # results as current (e.g. a `plot_umap_solo_doublet_*.png` from an older
+        # SOLO run passing for this run's doublet calls). Compare the hash
+        # report_embedding.py stamps into the sidecar.
         stale = ''
         recorded = str(summary.get('parent_config_hash', '') or '')
         current = str(self._config_hash or '')
@@ -1116,9 +1008,6 @@ class ReportBuilder():
         The interactive block is guarded separately: it reads a second, much larger
         artifact, and losing the static report to a fault in the interactive extra
         would be a poor trade.
-
-        Args:
-            force (bool): Re-run even if `report.done` exists.
         """
         done_path = self.paths['done'] / 'report.done'
         if done_path.exists() and not force:
@@ -1128,8 +1017,6 @@ class ReportBuilder():
         self.logger.info('[REPORT] Building QC report for sample "{}"'.format(self.sample_name))
         provenance, diagnostics, stats, quality = self._load_artifacts()
 
-        # Guarded separately: this reads a second, much larger artifact, and
-        # losing the static report to a fault in the extra is a poor trade.
         interactive = ''
         try:
             payload = self._interactive_payload(provenance)
@@ -1163,13 +1050,8 @@ def _read_manifests(out_path: Path) -> dict:
 
     Globs the per-sample manifests rather than walking the sample config, so the
     index reflects what the run actually produced. A manifest is only written on
-    success, so its absence is itself the failure signal.
-
-    Args:
-        out_path (Path): The mapping results root.
-
-    Returns:
-        dict: {sample: (manifest (dict), sample_dir (Path))}.
+    success, so its absence is itself the failure signal. Returns
+    {sample: (manifest, sample_dir)}.
     """
     logger = logging.getLogger('SingleCellMappingPipeline')
     manifests = {}
@@ -1188,12 +1070,7 @@ def write_run_index(out_path: Path, samples: dict, failures: list) -> None:
     """Write a run-level index linking to every per-sample report.
 
     Links rather than embeds: at 40 samples an index carrying the figures would be
-    far too large to open.
-
-    Args:
-        out_path (Path): The mapping results root; the index is written here.
-        samples (dict): Sample sheet entries, for the rows.
-        failures (list[tuple]): (sample, error) pairs to mark as failed.
+    far too large to open. `failures` is (sample, error) pairs to mark as failed.
     """
     logger = logging.getLogger('SingleCellMappingPipeline')
     out_path = Path(out_path)

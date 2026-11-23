@@ -69,28 +69,11 @@ def validate_samples(samples: dict) -> None:
 def main(config_path: str, cohort: str=None, build_indexes=False, force_list=None, force_mapping=False, force_preprocessing=False, force_qc=False, force_plotting=False, force_mapstats=False, force_report=False, force_doublets=False, skip_validation=False) -> int:
     """Run the mapping stage over every sample in the resolved cohort.
 
-    Each sample is wrapped so one failure does not kill the run, but failures are
-    collected and the process exits 1 if any occurred.
-
-    Args:
-        config_path (Path): pipeline_config.yaml.
-        cohort (str, optional): Cohort name from the `cohorts:` block.
-        build_indexes (bool): Build any index the cohort needs first.
-        force_list (list[str]): Index names to rebuild unconditionally.
-        force_mapping (bool): Ignore `mapping.done`.
-        force_preprocessing (bool): Ignore `preprocessing.done`.
-        force_qc (bool): Ignore the QC metric and filter sentinels.
-        force_plotting (bool): Ignore `qcplot.done`.
-        force_mapstats (bool): Ignore `mappingstats.done`.
-        force_report (bool): Ignore `report.done`.
-        force_doublets (bool): Ignore the doublet sentinel.
-        skip_validation (bool): Skip preflight.
-
-    Returns:
-        int: 0 if every sample succeeded, else 1.
+    Each sample is wrapped so one failure does not kill the run. Returns the
+    number of failed samples; the CLI exits 1 if it is non-zero. The `force_*`
+    flags ignore the matching `.done` sentinel (see the CLI help below).
     """
 
-    # Load top level config
     pipeline_cfg = load_config(config_path)
     cfg = dict(pipeline_cfg['configs'])
 
@@ -107,10 +90,8 @@ def main(config_path: str, cohort: str=None, build_indexes=False, force_list=Non
             'no sample sheet: pipeline_config.yaml sets neither configs.samples nor a '
             'cohort supplying one.')
 
-    # Get each sublevel config. load_samples folds in the sheet's `defaults:`
-    # block, so entries below read as if every key were written out per sample;
-    # it is also what every stage class uses, so they cannot disagree about what
-    # a sample says.
+    # load_samples folds in the sheet's `defaults:` block, and is what every stage
+    # class uses, so they cannot disagree about what a sample says.
     samples = load_samples(cfg['samples'])
     mapper_cfg = load_config(cfg['mapping'])
     index_cfg = load_config(cfg['indexes'])
@@ -144,23 +125,17 @@ def main(config_path: str, cohort: str=None, build_indexes=False, force_list=Non
     if doublet_cfg.get('env'):
         os.environ['DOUBLET_ENV'] = str(doublet_cfg['env'])
 
-    # Initiate logging (configured exactly once, here). One file per run, in
-    # its own logs/mapping/ subdirectory -- see shared.utils.pipeline_log_path
-    # for why (every stage now shares this convention) and
-    # batch_scripts/run_mapper.sh's logs/mapping-<jobid>.out/.err for the
-    # matching SLURM-side naming.
+    # Logging is configured exactly once, here: one file per run under
+    # logs/mapping/ (see shared.utils.pipeline_log_path).
     log_file = pipeline_log_path('mapping', log_dir=pipeline_cfg.get('log_dir', 'logs'))
     logger = setup_logger(log_file=log_file, level=logging.INFO)
     logger.info('[MAIN] Loaded configs, starting pipeline')
 
-    # Fail the whole run up front on an unusable mapper, rather than per sample
-    # inside the loop below where the try/except would mask it.
-    # Full preflight over the whole config tree, before any work is done. This
-    # is what catches an index_ref naming nothing, an index built for a
-    # different mapper, or a FASTQ that has moved -- all of which would
-    # otherwise surface hours in, after CellBender has spent GPU time.
-    # Warnings are logged and the run continues; a missing index is a normal
-    # pre---build-indexes state.
+    # Full preflight over the whole config tree, before any work is done: it
+    # catches an index_ref naming nothing, an index built for a different
+    # mapper, or a FASTQ that has moved, which would otherwise surface hours in,
+    # after CellBender has spent GPU time. Warnings are logged and the run
+    # continues; a missing index is a normal pre---build-indexes state.
     if not skip_validation:
         report = validate_mapping(config_path, cohort=cohort)
         for warning in report.warnings:
@@ -176,6 +151,9 @@ def main(config_path: str, cohort: str=None, build_indexes=False, force_list=Non
                 '--skip-validation to run anyway.'.format(len(report.errors), config_path))
         logger.info('[VALIDATE] Config tree OK ({} warning(s))'.format(len(report.warnings)))
 
+    # The mapper gate (kb/STARsolo are not implemented). Runs even with
+    # --skip-validation, and outside the per-sample try/except below, which
+    # would otherwise mask it as an ordinary per-sample failure.
     validate_samples(samples)
 
     # Build indexes if required. tmp_dir is optional; IndexBuilder falls back to
@@ -188,7 +166,6 @@ def main(config_path: str, cohort: str=None, build_indexes=False, force_list=Non
     for sample_name, sample_data in samples.items():
         logger.info('[MAPPING] Processing sample: {}'.format(sample_name))
         try:
-            # Map samples
             mapper = SingleCellMapper(
                 sample_name=sample_name,
                 sample_config_path=cfg['samples'],
@@ -199,20 +176,17 @@ def main(config_path: str, cohort: str=None, build_indexes=False, force_list=Non
             )
             mapper.run(force = force_mapping)
 
-            # Preprocess samples. cellbender_cfg carries the isolated environment
-            # CellBender is invoked from; see ProcessMappingResults._resolve_cellbender.
+            # cellbender_cfg carries the isolated environment CellBender is
+            # invoked from; see ProcessMappingResults._resolve_cellbender.
             preprocessor = ProcessMappingResults(sample_name, sample_config_path = cfg['samples'], mapping_config_path = cfg['mapping'], raw_dir = out_path, cellbender_cfg = cellbender_cfg)
             preprocessor.process(force = force_preprocessing)
 
-            # Get mapping statistics
             stats = StatsExtractor(sample_name, sample_config_path = cfg['samples'], raw_dir = out_path)
             stats.report_stats(force = force_mapstats)
 
-            # Compute QC metrics
             qccomputer = ComputeQCMetrics(sample_name, out_path, cfg['samples'], cfg['qc'])
             qccomputer.get_qc_metrics(force = force_qc)
 
-            # Filter QC metrics
             qcfilter = FilterQCMetrics(sample_name, out_path, cfg['samples'], cfg['filter'])
             qcfilter.run(force = force_qc)
 
@@ -223,16 +197,13 @@ def main(config_path: str, cohort: str=None, build_indexes=False, force_list=Non
             # other filter. Also emits X_umap_scVI for the QC report.
             doublets = DetectDoublets(sample_name, out_path, cfg['samples'], cfg['filter'],
                                       config_path)
-            # A returned reason means the SOLO worker faulted (as opposed to
-            # being deliberately skipped, which returns None). The sample still
-            # finishes -- doublet calls are additive, and its filtered artifact
-            # and report are worth keeping -- but it is counted as a failure so
-            # the run exits non-zero and the fault cannot pass unnoticed.
-            # doublets.py deliberately leaves `doublets.done` unwritten, so the
-            # next run retries it without needing --force-doublets.
+            # A returned reason means the SOLO worker faulted (a deliberate skip
+            # returns None). The sample still finishes -- doublet calls are
+            # additive -- but counts as a failure so the run exits non-zero.
+            # `doublets.done` stays unwritten, so the next run retries it
+            # without --force-doublets.
             doublet_failure = doublets.run(force = force_doublets)
 
-            # Plot metrics
             plots = QCPlotter(sample_name, out_path, cfg['samples'])
             plots.run(force = force_plotting)
 
@@ -331,42 +302,28 @@ def build_required_index(samples: dict, index_config: dict, mapper_config: dict,
     """Build every index this cohort's samples resolve to, if missing.
 
     Resolution goes through `shared/samples.py::resolve_index_ref`, the same path
-    the mapper uses, so a sample-level `index_ref` is visible here too.
-
-    Args:
-        samples (dict): Resolved sample sheet.
-        index_config (dict): index_config.yaml contents.
-        mapper_config (dict): mapping_config.yaml contents.
-        force_list (list[str]): Index names to rebuild unconditionally.
-        work_dir (Path, optional): Scratch root for the build.
+    the mapper uses, so a sample-level `index_ref` is built too. `force_list`
+    names indexes to rebuild unconditionally.
     """
-    # main() already called setup_logger(); just fetch the configured logger by name
-    # rather than reconfiguring it here.
+    # Configured by main(); fetched by name, not reconfigured.
     logger = logging.getLogger('SingleCellMappingPipeline')
-    # Extract required index names
     required_indexes = set()
-    
+
 
     for sample_name, sample_data in samples.items():
-        # Shared with SingleCellMapper._resolve_index. This used to consult only
-        # the mapper profile, so a sample carrying its own `index_ref:` mapped
-        # against an index that --build-indexes never knew to build.
         index_ref = resolve_index_ref(sample_data, mapper_config)
 
         if index_ref:
             required_indexes.add(index_ref)
 
-    # Build each index if missing
     for index_name in sorted(required_indexes):
         entry = index_config["indexes"].get(index_name)
         if not entry:
             logger.info('[INDEX] {} not found in index config, please check index config'.format(index_name))
-            continue  # was `return`, which silently skipped every remaining index
+            continue  # skip this one, keep building the rest
 
-        # Setup builder
         builder = IndexBuilder(gtf_path=entry['gtf'], genome_path=entry['genome'], out_path=entry['idx_path'], work_dir=work_dir)
 
-        # Generate index
         force = index_name in force_list
         builder.build_if_missing(mapper=entry['mapper'], extra_args=entry.get('extra_index_args', []), force=force)
 

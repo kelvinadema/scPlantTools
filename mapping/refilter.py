@@ -65,10 +65,10 @@ def decision_hash(decisions: dict) -> str:
     """
     Stable hash of a decision file's meaning.
 
-    Keys are sorted and presentational fields the user may edit freely
-    (`note`, `author`, `created`, `source_plot`) are excluded, so re-running
-    after a comment change is correctly a no-op while any change to what is
-    actually filtered forces a rerun.
+    Covers each decision with keys sorted and its `note` and `source_plot`
+    fields left out, plus the file's `parent_artifact`; no other file-level
+    field enters the hash. So re-running after a comment change is a no-op,
+    while any change to what is actually filtered forces a rerun.
     """
     payload = {
         'decisions': sorted(
@@ -116,15 +116,10 @@ class ManualRefilter():
     def _load_decisions(self) -> dict:
         """Read and validate the decision file.
 
-        An unrecognised `kind` is an error rather than a no-op, so a typo cannot
-        silently drop a decision.
-
-        Returns:
-            dict: The parsed decision file.
-
-        Raises:
-            DecisionError: If it is absent, the wrong schema, for another sample, or
-                carries an unknown decision kind.
+        Raises DecisionError if it is absent, the wrong schema major version, for
+        another sample, or carries an unknown decision kind (see `_KINDS`). An
+        unknown kind is an error rather than a no-op, so a typo cannot silently
+        drop a decision.
         """
         if not self.decisions_path.exists():
             raise DecisionError(
@@ -153,16 +148,8 @@ class ManualRefilter():
         return decisions
 
     def _check_parent(self, adata, decisions: dict, allow_mismatch: bool = False) -> None:
-        """Warn or raise when the decisions were made against a different parent.
-
-        Args:
-            adata (AnnData): The parent object.
-            decisions (dict): The parsed decision file.
-            allow_mismatch (bool): Downgrade the mismatch to a warning.
-
-        Raises:
-            DecisionError: On a mismatch, unless `allow_mismatch`.
-        """
+        """Raise DecisionError when the decisions were made against a different
+        parent config hash; only warn when `allow_mismatch`."""
         recorded = decisions.get('parent_config_hash')
         current = (adata.uns.get(PROVENANCE_KEY) or {}).get('config_hash')
         if not (recorded and current and recorded != current):
@@ -235,14 +222,8 @@ class ManualRefilter():
         decision file can legitimately outlive a re-run that changed which barcodes
         exist -- but it must be visible, since the selection is not being fully applied.
 
-        Args:
-            adata (AnnData): The parent object.
-            entry (dict): One decision.
-            mask (np.ndarray): Removal mask, modified in place.
-            remove (bool): Whether this decision removes or rescues.
-
-        Returns:
-            dict: What was applied, for the run record.
+        `remove` selects exclusion versus rescue. Returns what was applied, for
+        the run record.
         """
         barcodes = [str(b) for b in (entry.get('barcodes') or [])]
         index = pd.Index(adata.obs_names.astype(str))
@@ -250,8 +231,8 @@ class ManualRefilter():
         n_unknown = len(set(barcodes) - set(index))
         if n_unknown:
             # Not fatal -- a decision file can outlive a re-run that changed
-            # which barcodes exist -- but it must be visible, since the
-            # selection is not being fully applied.
+            # which barcodes exist -- but visible, since the selection is not
+            # fully applied.
             self.logger.warning(
                 '[REFILTER] {} of {} barcodes in a {} decision are not in {}; ignoring '
                 'them.'.format(n_unknown, len(barcodes), entry.get('kind'), self.parent_path.name))
@@ -396,15 +377,10 @@ class ManualRefilter():
 
     def run(self, force: bool=False, allow_unassessed: bool=False,
             allow_parent_mismatch: bool=False) -> Path:
-        """Apply the decision file and write `{sample}_filtered_manual.h5ad`.
+        """Apply the decision file and write `{sample}_filtered_manual.h5ad`; returns its path.
 
-        Args:
-            force (bool): Overwrite an existing manual artifact.
-            allow_unassessed (bool): Permit rescuing cells the cascade never assessed.
-            allow_parent_mismatch (bool): Permit a parent config-hash mismatch.
-
-        Returns:
-            Path: The written artifact.
+        Skipped when the existing artifact already carries this decision hash,
+        unless `force`.
         """
         decisions = self._load_decisions()
         this_hash = decision_hash(decisions)
@@ -518,23 +494,9 @@ def main(config_path: str, samples: list, decisions: str=None, force: bool=False
          allow_unassessed: bool=False, allow_parent_mismatch: bool=False) -> int:
     """CLI entry point: apply manual QC decisions to one or more samples.
 
-    Args:
-        config_path (Path): pipeline_config.yaml.
-        samples (list[str]): Samples to refilter.
-        decisions (Path, optional): Explicit decision file, for a single sample.
-        force (bool): Overwrite existing manual artifacts.
-        allow_unassessed (bool): Permit rescuing never-assessed cells.
-        allow_parent_mismatch (bool): Permit a parent config-hash mismatch.
-
-    Returns:
-        int: Process exit status.
+    Arguments mirror the CLI flags. Returns the number of samples that failed.
     """
-    # One log file per run, in its own logs/refilter/ subdirectory -- see
-    # shared.utils.pipeline_log_path for why. This used to be a fixed
-    # 'refilter.log' with no run id, so every run appended to the same file
-    # forever (setup_logger's FileHandler defaults to append mode) instead of
-    # getting its own -- which is why an old run's failures were still sitting
-    # in the log next to a new run's.
+    # One log file per run under logs/refilter/; see shared.utils.pipeline_log_path.
     pipeline_cfg = load_config(config_path) or {}
     log_file = pipeline_log_path('refilter', log_dir=pipeline_cfg.get('log_dir', 'logs'))
     setup_logger(log_file=log_file)
@@ -547,12 +509,8 @@ def main(config_path: str, samples: list, decisions: str=None, force: bool=False
                 force=force, allow_unassessed=allow_unassessed,
                 allow_parent_mismatch=allow_parent_mismatch)
         except Exception as e:
-            # exc_info=True appends the full traceback (to both the console and
-            # logs/refilter.log). The exception type is named explicitly too,
-            # since a bare `str(e)` alone is sometimes indistinguishable from a
-            # different failure -- a KeyError's str() is just the missing key,
-            # quoted, with no other context (which is exactly what made an
-            # earlier version of this failure mode look uninformative).
+            # Name the exception type: a KeyError's str() is just the missing
+            # key, quoted, with no other context. exc_info adds the traceback.
             logger.error('[REFILTER] Sample "{}" failed: {}: {}'.format(
                 sample, type(e).__name__, e), exc_info=True)
             failures.append((sample, '{}: {}'.format(type(e).__name__, e)))

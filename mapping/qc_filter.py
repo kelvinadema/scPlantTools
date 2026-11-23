@@ -64,14 +64,8 @@ LOGIT_CLIP = 1e-6
 
 
 def feature_transform(feature: str) -> str:
-    """Which transform `_transform_features` applied to produce `feature`.
-
-    Args:
-        feature (str): Possibly-transformed feature name.
-
-    Returns:
-        str or None: Transform kind, or None if untransformed.
-    """
+    """Which transform `_transform_features` applied to produce `feature`:
+    'logit', 'log1p', or '' if untransformed."""
     if not feature:
         return ''
     if feature.startswith('logit_'):
@@ -82,15 +76,7 @@ def feature_transform(feature: str) -> str:
 
 
 def invert_transform(value, kind: str):
-    """Map a value in transformed space back to the raw feature scale.
-
-    Args:
-        value (float): Value in transformed space.
-        kind (str): Transform kind.
-
-    Returns:
-        float: Value on the raw scale.
-    """
+    """Map a value in transformed space back to the raw feature scale (None passes through)."""
     if value is None:
         return None
     value = float(value)
@@ -102,14 +88,7 @@ def invert_transform(value, kind: str):
 
 
 def _is_per_feature(entry) -> bool:
-    """True when a `.uns['qc'][method]` entry nests one payload per feature.
-
-    Args:
-        entry (dict): Recorded method entry.
-
-    Returns:
-        bool: Whether the entry is per-feature.
-    """
+    """True when a `.uns['qc'][method]` entry nests one payload per feature."""
     return bool(entry) and isinstance(entry, dict) and all(
         isinstance(v, dict) for v in entry.values())
 
@@ -123,18 +102,10 @@ def collect_removal_flags(uns_qc: dict) -> list:
 
     Union of the flags of every method whose effective mode is 'filter'. Skip
     records carry no flag column and pass over harmlessly.
-
-    Args:
-        uns_qc (dict): The `.uns['qc']` mapping.
-
-    Returns:
-        list[str]: Flag column names.
     """
     flags = []
     for method, entry in (uns_qc or {}).items():
         if method in NON_FILTER_METHODS:
-            # A sample-level verdict, not a filter: no flag column, nothing to
-            # remove. Skipped explicitly so it can never be walked into.
             continue
         if not isinstance(entry, dict):
             continue
@@ -153,18 +124,9 @@ def collect_removal_flags(uns_qc: dict) -> list:
 def compute_dod_distances(X, k: int=15, metric='euclidean', logger=None, max_cells: int=MAX_DOD_CELLS):
     """Distance-of-distance transform (doi:10.1371/journal.pcbi.1010764, Eq. 1).
 
-    Quadratic in cell count; `max_cells` bounds it. See
-    docs/decisions/qc-cascade.md.
-
-    Args:
-        X (np.ndarray): Cells x features.
-        k (int): Neighbours used by the transform.
-        metric (str): Distance metric.
-        logger (logging.Logger, optional): Logger.
-        max_cells (int, optional): Subsample above this many cells.
-
-    Returns:
-        tuple: (D_raw (np.ndarray), D_dod (np.ndarray), index (np.ndarray)).
+    Quadratic in cell count: raises ValueError above `max_cells` rather than
+    subsampling. Returns (D, F): the raw pairwise distances and the symmetrised
+    DoD distances, both n x n. See docs/decisions/qc-cascade.md.
     """
     log = logger or logging.getLogger('SingleCellMappingPipeline')
     n = X.shape[0]
@@ -238,7 +200,8 @@ class FilterQCMetrics():
 
         self.adata = sc.read_h5ad(self.out_dir / '{}_qcfilters.h5ad'.format(self.sample_name))
 
-        # Key are writting during metric computation, store this to simplify filter config specification
+        # Metric name (as filter_config.yaml writes it) -> the .obs column
+        # qc_metrics wrote for a given layer.
         self.QC_KEY_REGISTRY = {
             "mitochondrial_fraction": lambda layer: f"mitochondrial_fraction_{layer}",
             "chloroplast_fraction": lambda layer: f"chloroplast_fraction_{layer}",
@@ -253,14 +216,7 @@ class FilterQCMetrics():
             "top_n_genes": self._resolve_top_n_genes}
 
     def _resolve_top_n_genes(self, layer: str) -> str:
-        """Resolve the top-N-genes feature name for a layer.
-
-        Args:
-            layer (str): Layer name.
-
-        Returns:
-            str: Feature name.
-        """
+        """The single `fraction_top<n>` column for a layer; KeyError if none or several exist."""
         prefix = "fraction_top" if layer == "X" else f"{layer}_fraction_top"
         matches = sorted(c for c in self.adata.obs.columns
                          if c.startswith(prefix) and c[len(prefix):].isdigit())
@@ -282,13 +238,6 @@ class FilterQCMetrics():
 
         Unrecognised names pass through as literal column names -- filter_config.yaml
         legitimately uses columns that are not registry aliases.
-
-        Args:
-            metrics (list[str]): Names as written in the config.
-            layer (str, optional): Layer whose per-layer columns to resolve against.
-
-        Returns:
-            list[str]: `.obs` column names.
         """
         resolved = []
         for key in metrics:
@@ -305,15 +254,6 @@ class FilterQCMetrics():
 
         Raises on an unrecognised value rather than defaulting to 'off', which would
         silently disable a filter. See docs/decisions/qc-cascade.md.
-
-        Args:
-            key (str): Filter block name.
-
-        Returns:
-            str: One of 'off', 'advisory', 'filter'.
-
-        Raises:
-            ValueError: If the configured mode is not recognised.
         """
         mode = self.filter_cfg.get("filters", {}).get(key, {}).get("mode", "off")
         if mode not in FILTER_MODES:
@@ -328,15 +268,9 @@ class FilterQCMetrics():
         """The mode a filter actually runs in, after the sample_quality verdict.
 
         A flagged sample downgrades distribution-dependent filters from 'filter' to
-        'advisory'. See docs/decisions/qc-cascade.md.
-
-        Args:
-            key (str): Filter block name.
-            distribution_dependent (bool, optional): Override the per-method default.
-                Needed because mad's adaptive and absolute entries differ.
-
-        Returns:
-            str: Effective mode.
+        'advisory'. `distribution_dependent` overrides the per-method default,
+        because mad's adaptive and absolute entries differ. See
+        docs/decisions/qc-cascade.md.
         """
         configured = self._filter_mode(key)
         if distribution_dependent is None:
@@ -348,27 +282,15 @@ class FilterQCMetrics():
         return configured
 
     def _source_feature(self, feature):
-        """The raw `.obs` column a possibly-transformed feature came from.
-
-        Args:
-            feature (str): Feature name.
-
-        Returns:
-            str: Source column name.
-        """
+        """The raw `.obs` column a possibly-transformed feature came from."""
         if not feature:
             return None
         inverse = {v: k for k, v in getattr(self, 'transformed_features', {}).items()}
         return inverse.get(feature, feature)
 
     def _record_qc_metadata(self, method: str, metadata: dict, feature: str=None, ):
-        """Store QC metadata in `adata.uns['qc'][method]`.
-
-        Args:
-            method (str): Filter method name.
-            metadata (dict): Payload to record.
-            feature (str, optional): Feature name, when the entry is per-feature.
-        """
+        """Store QC metadata in `adata.uns['qc'][method]` (or `[method][feature]`),
+        stamped with the effective execution mode."""
         if "qc" not in self.adata.uns:
             self.adata.uns["qc"] = {}
 
@@ -411,19 +333,12 @@ class FilterQCMetrics():
 
         A filter naming a feature absent from `.obs` raises rather than warning: silently
         disabling a filter lets the run report success on unfiltered data.
-
-        Args:
-            features (list): Feature config entries.
-            callback (callable): Called with (key, values).
-
-        Raises:
-            KeyError: If a named feature is not an `.obs` column.
+        `callback` is called with (key, values); all-NaN features are skipped.
         """
         for key in features:
             if key not in self.adata_active.obs.columns:
-                # Skipping here would silently disable the filter and let the run
-                # report success on unfiltered data. A configured filter whose
-                # feature does not exist is a config error, so say so.
+                # Skipping would silently disable the filter and report success
+                # on unfiltered data, so a missing configured feature is an error.
                 raise KeyError(
                     '[QC Filter] Feature "{}" requested by filter profile "{}" is not present in .obs. '
                     'Check that the corresponding metric is enabled in qc_config.yaml for this layer. '
@@ -437,14 +352,8 @@ class FilterQCMetrics():
             callback(key, x)
 
     def _get_filtered_view(self, filter_flags: list = None):
-        """The cells that survived the given upstream flags.
-
-        Args:
-            filter_flags (list[str]): Flag columns to exclude on.
-
-        Returns:
-            AnnData: A view of the survivors.
-        """
+        """A copy of the cells that survived the given upstream flags (the full
+        object when no flag resolves)."""
         self._adata_view_flags = []
 
         if not filter_flags:
@@ -469,11 +378,7 @@ class FilterQCMetrics():
         return self.adata[valid].copy()
 
     def _get_run_context(self) -> dict:
-        """What this stage saw, recorded into its `.uns['qc']` entry.
-
-        Returns:
-            dict: The context, carrying 'filtered_on_flags'.
-        """
+        """What this stage saw, recorded into its `.uns['qc']` entry."""
         return {
             "adata_view_used": self.adata_view is not None,
             "filtered_on_flags": list(self._adata_view_flags) if hasattr(self, "_adata_view_flags") else []}
@@ -486,15 +391,7 @@ class FilterQCMetrics():
         """Warn when one feature flags most of the cells it saw.
 
         Warns rather than acts: a genuinely poor sample may legitimately lose most of
-        its cells.
-
-        Args:
-            method (str): Filter method name.
-            key (str): Feature name.
-            flags (np.ndarray): Boolean flags.
-
-        Returns:
-            float: Fraction flagged.
+        its cells. Returns the fraction flagged.
         """
         flags = np.asarray(flags, dtype=bool)
         if flags.size == 0:
@@ -514,9 +411,6 @@ class FilterQCMetrics():
 
         Runs once, right after barcode rank. Sets `low_quality_sample`, which
         `_effective_mode` reads. See docs/decisions/qc-cascade.md.
-
-        Args:
-            filter_flags (list, optional): Flags recorded so far.
         """
         cfg = self.filter_cfg.get("filters", {}).get("sample_quality", {})
         self.low_quality_sample = False
@@ -621,19 +515,9 @@ class FilterQCMetrics():
             'viable': viable,
             'flags_applied': applied})
 
-    # A flagged sample downgrades rather than skips, so the report still has
-    # evidence to show.
-
     def _degenerate_scale(self, x):
-        """Report why a MAD threshold cannot be computed, or None if it can.
-
-        Args:
-            x (np.ndarray): Feature values.
-
-        Returns:
-            tuple or None: (reason (str), share (float)) when the scale estimate is
-                unusable, else None.
-        """
+        """Why a MAD threshold cannot be computed, as (reason, tie fraction), or
+        None if it can."""
         x = np.asarray(x, dtype=float)
         finite = x[np.isfinite(x)]
         if finite.size == 0:
@@ -655,12 +539,7 @@ class FilterQCMetrics():
         return self.adata if view is None else view
         
     def _write_obs_column(self, key: str, series: pd.Series):
-        """Write one derived column into `.obs`, aligned to the full cell axis.
-
-        Args:
-            key (str): Column name.
-            series (pandas.Series): Values for the cells this stage saw.
-        """
+        """Write one derived column into `.obs` (and the active view's), aligned to the full cell axis."""
         self.adata.obs[key] = series
         if hasattr(self, "adata_view") and self.adata_view is not None:
             self.adata_view.obs[key] = series.loc[self.adata_view.obs.index]
@@ -668,10 +547,10 @@ class FilterQCMetrics():
 
     @log_exceptions()
     def _transform_features(self, features: list):
-        """Apply the configured transform to each feature, caching the result.
+        """Transform each feature, caching the name in `self.transformed_features`.
 
-        Args:
-            features (list[str]): Feature names.
+        Fractions in [0, 1] get a clipped logit (`logit_<key>`), everything else
+        log1p (`log_<key>`).
         """
         if not hasattr(self, 'transformed_features'):
             self.transformed_features = {}
@@ -714,13 +593,10 @@ class FilterQCMetrics():
         self._iterate_features(features, transform)
 
     def _zscore_features(self, features: list):
-        """Z-score features on the active view.
+        """Z-score features on the active view into `z_<feature>` columns.
 
-        Args:
-            features (list[str]): Feature names.
-
-        Returns:
-            np.ndarray: Z-scored matrix.
+        Rows with NaN/inf are dropped. Returns (z-scored column names, index of
+        the cells used), or (None, None) when nothing is left to scale.
         """
         ad = self.adata_active
         full_index = self.adata.obs.index
@@ -765,17 +641,13 @@ class FilterQCMetrics():
     def _bcrank_filter(self, features: list, min_total_counts: int = 500, clip_percent=(5, 95), smoothing=True, polyorder=3, flag_name: str = 'flag_bcrank', threshold_override=None):
         """Barcode rank thresholding with clipping and optional smoothing.
 
-        Args:
-            features (list[str]): Feature names.
-            min_total_counts (int): Lower bound on total counts.
-            clip_percent (tuple): Percentile clip applied before the knee search.
-            smoothing (bool): Savitzky-Golay smoothing of the rank curve.
-            polyorder (int): Smoothing polynomial order.
-            flag_name (str): Output flag column.
-            threshold_override (float, optional): Use this cut instead of the knee.
-
-        Returns:
-            list[str] or None: Flag columns written, or None if skipped.
+        Four candidate cut-offs are found on the (optionally Savitzky-Golay
+        smoothed) rank curve, inside the `clip_percent` range: slope change,
+        curvature, knee and inflection. The MOST LENIENT one (lowest UMI cut-off)
+        is chosen by policy, and then clamped to a dynamic range whose floor is
+        `min_total_counts`. All four are recorded so the choice is auditable.
+        `threshold_override` bypasses both the search and the clamp. Returns the
+        flag columns written.
         """
         ad = self.adata_active
         flags = []
@@ -833,8 +705,8 @@ class FilterQCMetrics():
             candidate_thresholds = {m: float(sorted_counts[i]) for m, i in candidate_indices.items()}
             self.logger.info("[QC Filter] Candidate thresholds: " +", ".join(f"{k}: idx={v}, umi={sorted_counts[v]:.1f}" for k,v in candidate_indices.items()))
 
-            # Largest index == lowest UMI cut-off == most lenient candidate. See
-            # the docstring: this is a deliberate policy, not a tie-break.
+            # Largest index == lowest UMI cut-off == most lenient candidate: a
+            # deliberate policy (see the docstring), not a tie-break.
             selected_method = max(candidate_indices, key=candidate_indices.get)
             idx = candidate_indices[selected_method]
 
@@ -906,17 +778,9 @@ class FilterQCMetrics():
 
         `k` is in raw MAD units, not sigma. See docs/decisions/qc-cascade.md.
 
-        Args:
-            features (list[str]): Feature names.
-            k (float): Multiplier on the MAD.
-            direction (str): 'lower', 'upper' or 'both'.
-            transform (bool): Fit on the transformed feature.
-            max_value (float, optional): Absolute upper cap.
-            min_value (float, optional): Absolute lower cap.
-            record_method (str): Name recorded in `.uns['qc']`.
-
-        Returns:
-            list[str] or None: Flag columns written, or None if skipped.
+        With `max_value`/`min_value` set, those fixed bounds are applied instead
+        of the adaptive rule and the feature is not transformed. A feature with a
+        degenerate scale is skipped and recorded. Returns the flag columns written.
         """
         if direction not in ('lower', 'upper', 'both'):
             raise ValueError(
@@ -926,12 +790,10 @@ class FilterQCMetrics():
         absolute = max_value is not None or min_value is not None
         if transform and not absolute:
             self._transform_features(features)
-            # `.get`, not `[...]`: _iterate_features SKIPS a feature that is
-            # all-NaN (it logs "is all NaNs, skipping" and continues), so its
-            # transform is never recorded. Indexing unconditionally turned that
-            # deliberate skip into `KeyError: '<feature>'` -- a message that reads
-            # like a missing .obs column when the column is present and merely
-            # unusable. A skipped feature is simply not filtered on.
+            # Membership filter, not plain indexing: _iterate_features skips an
+            # all-NaN feature, so it has no recorded transform; indexing would
+            # raise a KeyError that reads like a missing .obs column. A skipped
+            # feature is simply not filtered on.
             features = [self.transformed_features[feature] for feature in features
                         if feature in self.transformed_features]
         flag_cols = []
@@ -1015,29 +877,12 @@ class FilterQCMetrics():
 
     @log_exceptions()
     def _mad(self, x):
-        """Median absolute deviation, unscaled.
-
-        Args:
-            x (np.ndarray): Values.
-
-        Returns:
-            float: MAD.
-        """
+        """Median absolute deviation, unscaled (no 1.4826 consistency constant)."""
         med = np.nanmedian(x)
         return np.nanmedian(np.abs(x - med))
 
     def _compute_mahalanobis(self, x, mean, cov, cov_type: str='diag'):
-        """Mahalanobis distance from each row of `x` to `mean` under `cov`.
-
-        Args:
-            x (np.ndarray): Rows to score.
-            mean (np.ndarray): Distribution mean.
-            cov (np.ndarray): Covariance.
-            cov_type (str): Covariance structure.
-
-        Returns:
-            np.ndarray: Distances.
-        """
+        """Mahalanobis distance from each row of `x` to `mean` under a 'diag' or 'full' `cov`."""
         x_centered = np.asarray(x) - np.asarray(mean)
 
         if cov_type == 'diag':
@@ -1060,16 +905,8 @@ class FilterQCMetrics():
     def _regression_filter(self, x_key, y_key, k: int=3, transform: bool=True, direction: str='both', flag_name: str='flag_regression'):
         """Fit y ~ x and flag cells with residuals beyond median +/- k * MAD.
 
-        Args:
-            x_key (str): Predictor column.
-            y_key (str): Response column.
-            k (float): Multiplier on the residual MAD.
-            transform (bool): Fit on transformed features.
-            direction (str): 'lower', 'upper' or 'both'.
-            flag_name (str): Output flag column.
-
-        Returns:
-            list[str] or None: Flag columns written, or None if skipped.
+        Returns [flag_name], or None when skipped (fewer than 10 valid cells, or
+        a degenerate residual scale, which is recorded).
         """
         ad = self.adata_active
 
@@ -1156,16 +993,11 @@ class FilterQCMetrics():
     def _gmm_filter(self, features, max_components=3, cutoff_quantile=0.99, scope_global=False, flag_name: str='flag_gmm', transform: bool=True):
         """Flag cells by Mahalanobis distance to a BIC-selected mixture.
 
-        Args:
-            features (list[str]): Feature names.
-            max_components (int): Upper bound on components.
-            cutoff_quantile (float): Distance quantile to cut at.
-            scope_global (bool): Fit on all cells rather than the active view.
-            flag_name (str): Output flag column.
-            transform (bool): Fit on transformed features.
-
-        Returns:
-            list[str] or None: Flag columns written, or None if skipped.
+        Features that are neither approximately normal nor multimodal are dropped
+        first. A cell is flagged when its distance to its own component exceeds
+        the chi-square `cutoff_quantile` for the feature count. `scope_global` is
+        not implemented (it only logs a warning). Returns None when no feature
+        survives the screen, otherwise [flag_name].
         """
         ad = self.adata_active
         if transform:
@@ -1262,16 +1094,12 @@ class FilterQCMetrics():
 
     @log_exceptions()
     def _is_approximately_normal(self, features: list, alpha=0.01, skew_thresh=1, kurt_thresh=1):
-        """Whether each feature is close enough to normal for a Gaussian-based rule.
+        """The features that are NOT close enough to normal for a Gaussian-based rule.
 
-        Args:
-            features (list[str]): `.obs` columns to test.
-            alpha (float): Significance level for the normality test.
-            skew_thresh (float): Absolute skew above which normality is rejected.
-            kurt_thresh (float): Absolute excess kurtosis above which it is rejected.
-
-        Returns:
-            dict: {feature: bool}.
+        A feature fails on |skew| >= `skew_thresh`, |excess kurtosis| >=
+        `kurt_thresh`, or a Shapiro-Wilk p <= `alpha` (Shapiro is skipped at 5,000+
+        values, where it rejects everything), and also when it has fewer than 20
+        values.
         """
         failed = []
         def normality(key, x):
@@ -1304,16 +1132,7 @@ class FilterQCMetrics():
 
     @log_exceptions()
     def _detect_multimodal_features(self, features: list, min_peaks: int = 2, prominence: float = 0.05) -> list:
-        """Detect likely-multimodal features by KDE peak detection.
-
-        Args:
-            features (list[str]): Feature names.
-            min_peaks (int): Peaks required to call multimodality.
-            prominence (float): Minimum peak prominence.
-
-        Returns:
-            list[str]: Features judged multimodal.
-        """
+        """The features with at least `min_peaks` KDE peaks of the given prominence."""
         multimodal = []
 
         def check_multimodal(feature, x):
@@ -1343,14 +1162,8 @@ class FilterQCMetrics():
     def _select_gmm_by_bic(self, X, max_components: int=3, random_state: int=42, min_k_cells: int=15):
         """Choose the number of GMM components by BIC.
 
-        Args:
-            X (np.ndarray): Observations.
-            max_components (int): Upper bound.
-            random_state (int): Seed.
-            min_k_cells (int): Cells required per component.
-
-        Returns:
-            tuple: (best_k (int), cov_type (str), bics (dict)).
+        Returns (best_k, covariance type, list of BICs in component order; inf
+        where a fit failed).
         """
         bics = []
         lowest_bic = np.inf
@@ -1358,16 +1171,15 @@ class FilterQCMetrics():
 
         n_cells, n_features = X.shape
 
-        # Bound by the caller's ceiling as well as by dataset size. Without the
-        # caller's bound this reached min(n/15, sqrt(n)) -- 31 components for 1000
-        # cells -- and fitted a GMM for every one of them.
+        # Bound by the caller's ceiling as well as by dataset size; the size
+        # bound alone, min(n/15, sqrt(n)), allows 31 components at 1000 cells.
         max_components = max(1, min(max_components, n_cells // min_k_cells, int(np.sqrt(n_cells))))
         self.logger.info("[GMM] Starting BIC-based component selection up to {} components".format(max_components))
 
         # A full covariance has p(p+1)/2 free parameters per component; require
         # roughly 10 samples per parameter before trusting one, else stay diagonal.
-        # (This previously compared n_features against a figure derived from
-        # n_cells -- always false, so 'full' was unreachable.)
+        # (An earlier version of this check could never select 'full', so GMM
+        # fits recorded before the fix are all 'diag'.)
         params_per_component = n_features * (n_features + 1) / 2
         required_full = 10 * params_per_component * max_components
         cov_type = 'full' if n_cells >= required_full else 'diag'
@@ -1421,26 +1233,19 @@ class FilterQCMetrics():
         given a fixed 2-component model).
 
         **Do not add a transform to either axis.** Both `feature` and
-        `complexity_key` are used on their raw scale -- confirmed against the
-        package source (`mixtureModel.R`), where
-        `flexmix(subsets_mito_percent ~ detected, ...)` uses both variables
-        completely untransformed. A logit on the fraction fabricates a
-        "compromised" component out of near-zero noise; it was tried, it
-        misfired on a real sample, and it was removed. The account is in
-        `docs/decisions/qc-miqc-transform.md`; what stops it coming back is
-        `tests/test_qc_miqc.py::test_raw_scale_skips_on_pure_noise`.
+        `complexity_key` are used on their raw scale, as in the package source
+        (`mixtureModel.R`: `flexmix(subsets_mito_percent ~ detected, ...)`). A
+        logit on the fraction fabricates a "compromised" component out of
+        near-zero noise; it was tried and misfired on a real sample. The account
+        and measurements are in `docs/decisions/qc-miqc-transform.md`; the guard
+        is `tests/mapping/test_qc_properties.py::test_miqc_declines_on_structureless_noise`.
 
         Both axes are standardized (zero mean, unit variance) *inside* the fit,
         and every fitted quantity is converted back to raw units immediately
-        after. With `covariance_type='full'` and no rescaling, the axis with the
-        larger absolute variance dominates which axis the fit actually splits on
-        -- complexity spans hundreds-to-thousands of genes while fraction's
-        natural spread can be a few thousandths, and standardizing complexity
-        alone is not enough because unit variance still dwarfs fraction's.
-        `min_component_separation` / `posterior_threshold` / the intact-line
-        comparison all keep their raw-proportion-unit meaning; only the fit
-        itself operates in standardized space. This is uniform across whichever
-        feature the function is called on.
+        after: with `covariance_type='full'` and no rescaling, the axis with the
+        larger absolute variance (complexity) dominates which axis the fit
+        splits on. `min_component_separation`, `posterior_threshold` and the
+        intact-line comparison all keep their raw-proportion-unit meaning.
 
         A cell is flagged only when both hold:
           - its posterior probability of belonging to the higher-fraction
@@ -1514,19 +1319,11 @@ class FilterQCMetrics():
 
         X = df[[complexity_key, feature]].values
 
-        # Standardize BOTH axes for the fit -- see the docstring. Complexity
-        # spans hundreds-to-thousands of genes; fraction spans roughly 0-0.05
-        # with a natural spread that can be orders of magnitude smaller still
-        # (a low-incidence feature's real signal might have a spread of just a
-        # few thousandths). Standardizing complexity alone to unit variance
-        # does NOT fix this: unit variance is still enormously larger than
-        # fraction's own natural variance, so complexity would still dominate
-        # covariance_type='full' clustering. Both axes need to be brought to
-        # comparable scale, not just complexity brought to an arbitrary one.
-        # gmm.means_/covariances_ are unscaled back to raw units immediately
-        # after fitting so every downstream computation (separation check,
-        # intact_line, recorded metadata) uses the exact same formulas and
-        # raw-unit meaning as before this change.
+        # Standardize BOTH axes for the fit -- see the docstring. Standardizing
+        # complexity alone is not enough: unit variance still dwarfs a
+        # low-incidence fraction's spread of a few thousandths. Means and
+        # covariances are unscaled right after fitting, so the separation check,
+        # intact_line and recorded metadata all stay in raw units.
         col_mean = X.mean(axis=0)
         col_std = X.std(axis=0)
         if col_std[0] <= 0:
@@ -1573,9 +1370,8 @@ class FilterQCMetrics():
         # Conditional mean of a bivariate normal is linear in the conditioning
         # variable, so the intact component's fitted covariance already contains
         # the "boundary line" miQC fits directly -- read off here instead of
-        # fitting a second regression. means_raw/covariances_raw are already
-        # back in raw units, so this is the same formula as before scaling
-        # was introduced; X[:, 0] is the original raw complexity array.
+        # fitting a second regression. means_raw/covariances_raw are in raw
+        # units; X[:, 0] is the raw complexity array.
         mean_intact = means_raw[intact_idx]
         cov_intact = covariances_raw[intact_idx]
         var_complexity = cov_intact[0, 0]
@@ -1623,15 +1419,8 @@ class FilterQCMetrics():
     def _iforest_filter(self, features: list, flag_name: str='flag_iforest', n_estimators: int=100, contamination=0.05, random_state: int=42):
         """Isolation-forest outlier flagging on z-scored features.
 
-        Args:
-            features (list[str]): Feature names.
-            flag_name (str): Output flag column.
-            n_estimators (int): Number of trees.
-            contamination (float): Expected outlier fraction.
-            random_state (int): Seed.
-
-        Returns:
-            list[str] or None: Flag columns written, or None if skipped.
+        `contamination` makes the flagged count a quota, not a finding. Returns
+        [flag_name], or None when there are no valid features or under 10 cells.
         """
         ad = self.adata_active
 
@@ -1652,10 +1441,9 @@ class FilterQCMetrics():
         scores = clf.decision_function(X_scaled)
         flags = preds == -1
 
-        # Index by valid_idx, not ad.obs.index: _zscore_features drops NaN/inf rows,
-        # so these arrays are as long as the *surviving* cells. Assigning them to
-        # the full view is a length mismatch, and the fraction metrics carry NaN by
-        # design (see _layer_fraction's mask_with_zero), so this always fired.
+        # Index by valid_idx, not ad.obs.index: _zscore_features drops NaN/inf
+        # rows, and the fraction metrics carry NaN by design (see
+        # _layer_fraction's mask_with_zero), so the arrays are shorter than the view.
         flag_series = pd.Series(False, index=self.adata.obs.index)
         flag_series.loc[valid_idx] = flags
 
@@ -1672,9 +1460,9 @@ class FilterQCMetrics():
         self._record_qc_metadata(method = 'iforest', metadata = {
             "flag_col": flag_name,
             "features": features,
-            # offset_ is what predict() actually compares against; the previous
-            # np.quantile(scores, contamination) only approximated it and was
-            # meaningless once contamination='auto'.
+            # offset_ is what predict() actually compares against. Earlier
+            # records stored np.quantile(scores, contamination) here, an
+            # approximation that is meaningless for contamination='auto'.
             "threshold": float(clf.offset_),
             "contamination": contamination,
             "n_estimators": n_estimators,
@@ -1689,19 +1477,10 @@ class FilterQCMetrics():
                     max_cells: int=MAX_DOD_CELLS):
         """Flag cells whose neighbourhood is rearranged by the DoD transform.
 
-        See docs/decisions/qc-cascade.md.
-
-        Args:
-            features (list[str]): Feature names.
-            method (str): 'overlap' or 'change'.
-            flag_name (str): Output flag column.
-            k (int): Neighbours compared.
-            overlap_threshold (float): Minimum neighbour overlap to pass.
-            contamination (float): Expected outlier fraction.
-            max_cells (int): Subsample above this many cells.
-
-        Returns:
-            list[str] or None: Flag columns written, or None if skipped.
+        `method` is 'overlap' (the paper's criterion: flag below
+        `overlap_threshold`), 'quantile' or 'iforest'. Above `max_cells` the
+        transform raises rather than subsampling. Returns [flag_name], or None when
+        skipped (recorded). See docs/decisions/qc-cascade.md.
         """
         run_context = self._get_run_context()
 
@@ -1745,8 +1524,7 @@ class FilterQCMetrics():
         flag_series.loc[df.index] = flags
         self._write_obs_column(flag_name, flag_series)
 
-        # _write_obs_column already aligns a partially-indexed series onto the full
-        # frame; the previous .loc assignment beforehand was a redundant duplicate.
+        # _write_obs_column aligns a partially-indexed series onto the full frame.
         self._write_obs_column("dod_change", metrics["change"])
         self._write_obs_column("dod_overlap", metrics["overlap"])
 
@@ -1772,13 +1550,8 @@ class FilterQCMetrics():
     def _dod_metrics(self, features: list, k: int=15, max_cells: int=MAX_DOD_CELLS):
         """Compute DoD metrics on the z-scored features of the active view.
 
-        Args:
-            features (list[str]): Feature names.
-            k (int): Neighbours compared.
-            max_cells (int): Subsample above this many cells.
-
-        Returns:
-            tuple: (overlap (np.ndarray), change (np.ndarray), index (np.ndarray)).
+        Returns (metrics, None), where metrics holds 'change', 'overlap',
+        'valid_idx', 'features' and 'k', or (None, reason) when DoD cannot run.
         """
         ad = self.adata_active
 
@@ -1817,16 +1590,7 @@ class FilterQCMetrics():
 
     @log_exceptions()
     def _compute_dod_change_score(self, D_raw, D_dod, index):
-        """Mean relative shrinkage of a cell's distances under the DoD transform.
-
-        Args:
-            D_raw (np.ndarray): Original distances.
-            D_dod (np.ndarray): Transformed distances.
-            index (np.ndarray): Cells scored.
-
-        Returns:
-            np.ndarray: Per-cell change score.
-        """
+        """Per-cell relative change of mean distance under the DoD transform, as a Series on `index`."""
         if D_raw.shape != D_dod.shape:
             raise ValueError("D_raw and D_dod must have same shape")
         if D_raw.shape[0] != len(index):
@@ -1841,17 +1605,8 @@ class FilterQCMetrics():
 
     @log_exceptions()
     def _compute_neighborhood_overlap(self, dmat_original, dmat_dod, index, k: int=15):
-        """Fraction of a cell's K nearest neighbours preserved under the DoD transform.
-
-        Args:
-            dmat_original (np.ndarray): Original distances.
-            dmat_dod (np.ndarray): Transformed distances.
-            index (np.ndarray): Cells scored.
-            k (int): Neighbours compared.
-
-        Returns:
-            np.ndarray: Per-cell overlap fraction.
-        """
+        """Fraction of a cell's K nearest neighbours preserved under the DoD
+        transform, as a Series on `index`."""
         if dmat_original.shape != dmat_dod.shape:
             raise ValueError("Distance matrices must be the same shape")
         if dmat_original.shape[0] != len(index):
@@ -1879,11 +1634,9 @@ class FilterQCMetrics():
     def _run_bc_filter(self, filter_flags=None):
         """Run the barcode-rank stage.
 
-        Args:
-            filter_flags (list[str]): Upstream flag columns this stage is seeded with.
-
-        Returns:
-            list[str]: The flag columns after this stage, for the next one.
+        Like every `_run_*` stage: seeded on the upstream `filter_flags`, and
+        returns this stage's flag columns only when it filters (None when off or
+        advisory), so advisory flags never seed later stages or the removal mask.
         """
         bc_cfg = self.filter_cfg.get("filters", {}).get("barcode_rank", {})
         mode = self._effective_mode('barcode_rank')
@@ -1905,14 +1658,10 @@ class FilterQCMetrics():
         return flag_col if mode == 'filter' else None
 
     def _resolve_sample_type_value(self, value, feature_name=''):
-        """Resolve a MAD cap that may vary by sample_type.
+        """Resolve a MAD cap that may be a scalar or a {sample_type: cap} mapping.
 
-        Args:
-            value: Scalar cap, or a mapping of sample_type to cap.
-            feature_name (str): Feature the cap applies to.
-
-        Returns:
-            float or None: Cap for this sample, or None if not applicable.
+        A mapping that lacks this sample's sample_type raises rather than leaving
+        the absolute backstop unset.
         """
         if not isinstance(value, dict):
             return value
@@ -1927,11 +1676,7 @@ class FilterQCMetrics():
         return value[self.sample_type]
 
     def _run_mad_filter(self, filter_flags=None):
-        """Run the adaptive MAD entries of the filter config.
-
-        Args:
-            filter_flags (list): Accumulated flag columns, appended to in place.
-        """
+        """Run the adaptive MAD entries of the filter config (see `_run_bc_filter`)."""
         mad_cfg = self.filter_cfg.get("filters", {}).get("mad", {})
         mode = self._effective_mode('mad')
         if mode == 'off':
@@ -1973,10 +1718,8 @@ class FilterQCMetrics():
     def _run_absolute_filter(self, filter_flags=None):
         """Apply the fixed max_value/min_value caps as a cleanup pass.
 
-        Runs after the adaptive rules. See docs/decisions/qc-cascade.md.
-
-        Args:
-            filter_flags (list): Accumulated flag columns, appended to in place.
+        Runs after the adaptive rules; see `_run_bc_filter` and
+        docs/decisions/qc-cascade.md.
         """
         mad_cfg = self.filter_cfg.get("filters", {}).get("mad", {})
         # distribution_dependent=False: the caps keep filtering even when
@@ -2015,14 +1758,7 @@ class FilterQCMetrics():
         return absolute_flags if mode == 'filter' else None
 
     def _run_miqc_filter(self, filter_flags=None):
-        """Run the miQC stage, in parallel with MAD's adaptive rule.
-
-        Args:
-            filter_flags (list[str]): Upstream flag columns this stage is seeded with.
-
-        Returns:
-            list[str]: The flag columns after this stage, for the next one.
-        """
+        """Run the miQC stage, in parallel with MAD's adaptive rule (see `_run_bc_filter`)."""
         miqc_cfg = self.filter_cfg.get("filters", {}).get("miqc", {})
         mode = self._effective_mode('miqc')
         if mode == 'off':
@@ -2047,14 +1783,7 @@ class FilterQCMetrics():
         return flags if mode == 'filter' else None
 
     def _run_regression_filter(self, filter_flags=None):
-        """Run the regression-residual stage.
-
-        Args:
-            filter_flags (list[str]): Upstream flag columns this stage is seeded with.
-
-        Returns:
-            list[str]: The flag columns after this stage, for the next one.
-        """
+        """Run the regression-residual stage (see `_run_bc_filter`)."""
         reg_cfg = self.filter_cfg.get("filters", {}).get("regression", {})
         mode = self._effective_mode('regression')
         if mode == 'off':
@@ -2073,14 +1802,7 @@ class FilterQCMetrics():
         return flag_col if mode == 'filter' else None
 
     def _run_gmm_filter(self, filter_flags=None):
-        """Run the Gaussian-mixture stage.
-
-        Args:
-            filter_flags (list[str]): Upstream flag columns this stage is seeded with.
-
-        Returns:
-            list[str]: The flag columns after this stage, for the next one.
-        """
+        """Run the Gaussian-mixture stage (see `_run_bc_filter`)."""
         gmm_cfg = self.filter_cfg.get("filters", {}).get("gmm", {})
         mode = self._effective_mode('gmm')
         if mode == 'off':
@@ -2098,14 +1820,7 @@ class FilterQCMetrics():
         return flag_col if mode == 'filter' else None
 
     def _run_iforest_filter(self, filter_flags=None):
-        """Run the isolation-forest stage. Its count is a quota, not a finding.
-
-        Args:
-            filter_flags (list[str]): Upstream flag columns this stage is seeded with.
-
-        Returns:
-            list[str]: The flag columns after this stage, for the next one.
-        """
+        """Run the isolation-forest stage (see `_run_bc_filter`). Its count is a quota, not a finding."""
         if_cfg = self.filter_cfg.get("filters", {}).get("iforest", {})
         mode = self._effective_mode('iforest')
         if mode == 'off':
@@ -2123,14 +1838,7 @@ class FilterQCMetrics():
         return flag_col if mode == 'filter' else None
 
     def _run_dod_filter(self, filter_flags=None):
-        """Run the distance-of-distance stage, subject to its `max_cells` guard.
-
-        Args:
-            filter_flags (list[str]): Upstream flag columns this stage is seeded with.
-
-        Returns:
-            list[str]: The flag columns after this stage, for the next one.
-        """
+        """Run the distance-of-distance stage, subject to its `max_cells` guard (see `_run_bc_filter`)."""
         dod_cfg = self.filter_cfg.get("filters", {}).get("dod", {})
         mode = self._effective_mode('dod')
         if mode == 'off':
@@ -2152,14 +1860,10 @@ class FilterQCMetrics():
 
     @log_exceptions()
     def run(self, force: bool=False):
-        """Run the whole cascade and write the annotated object.
+        """Run the whole cascade and rewrite `{sample}_qcfilters.h5ad` in place.
 
-        Args:
-            force (bool): Re-run even if the filter sentinel exists.
-
-        Returns:
-            AnnData: The object, with flag columns in `.obs` and diagnostics in
-                `.uns['qc']`.
+        Flag columns go to `.obs`, diagnostics to `.uns['qc']`. Skipped when
+        `qcfilter.done` exists, unless `force`.
         """
         self.logger.info('[QC filter] Starting QC filtering for sample: {}'.format(self.sample_name))
         done_path = self.paths['done'] / 'qcfilter.done'
@@ -2168,18 +1872,14 @@ class FilterQCMetrics():
             return
 
         # Clear any previous run's diagnostics before recording this one's.
-        # `_qcfilters.h5ad` is re-read and re-written in place across stages, so
-        # .uns['qc'] otherwise accumulates: an entry for a feature that has since
-        # been removed from the config, or recorded under a key this version no
-        # longer writes, survives forever and keeps appearing in the report with
-        # a stale explanation attached. Seen in practice after the sample_quality
-        # gate changed from skipping filters to downgrading them -- the old
-        # '{feature}_adaptive' skip records lingered alongside the new entries,
-        # claiming filters had been skipped when they had actually run.
-        #
-        # Same reasoning as qc_plot.py clearing its own figure prefixes. Nothing
-        # upstream of this stage writes .uns['qc'], and doublets.py writes its
-        # own entry after this runs, so clearing the whole key is safe.
+        # `_qcfilters.h5ad` is rewritten in place, so .uns['qc'] would otherwise
+        # keep entries for features since removed from the config, or keys this
+        # version no longer writes, and the report would show them. (Objects
+        # filtered before this clear existed can still carry stale
+        # '{feature}_adaptive' skip records from when the sample_quality gate
+        # skipped filters instead of downgrading them.) Nothing upstream writes
+        # .uns['qc'] and doublets.py writes its own entry later, so clearing the
+        # whole key is safe.
         if 'qc' in self.adata.uns:
             self.logger.info('[QC Filter] Clearing {} diagnostic block(s) from a previous run'.format(
                 len(self.adata.uns['qc'])))
@@ -2191,10 +1891,9 @@ class FilterQCMetrics():
 
         # MAD's adaptive rule and miQC run in PARALLEL, both on the barcode-rank
         # survivors: a cell fails the organelle/count check if EITHER flags it.
-        # miQC used to be seeded on bc+mad, so it only ever saw cells the adaptive
-        # upper-tail rule and the absolute caps had already stripped down -- the
-        # compromised high-fraction population it exists to find was gone before it
-        # looked. Seeding it on flag_bc gives it the full putative-droplet set.
+        # Seeded after MAD, miQC would only see cells the upper-tail rule had
+        # already stripped -- the compromised population it exists to find.
+        # (Earlier versions did seed it on bc+mad; their miQC results reflect that.)
         flag_mad = self._run_mad_filter(filter_flags = flag_bc)
         flag_miqc = self._run_miqc_filter(filter_flags = flag_bc)
 
@@ -2205,8 +1904,8 @@ class FilterQCMetrics():
         flag_abs = self._run_absolute_filter(
             filter_flags = self._merge_flag_lists(flag_bc, flag_mad, flag_miqc))
 
-        # Everything downstream sees the union of the organelle/count checks --
-        # exactly the set it saw before (bc + all MAD + miQC).
+        # Everything downstream sees the union of the organelle/count checks
+        # (bc + all MAD + miQC).
         organelle = self._merge_flag_lists(flag_bc, flag_mad, flag_miqc, flag_abs)
 
         flag_rgrs = self._run_regression_filter(filter_flags = organelle)
@@ -2230,11 +1929,8 @@ class FilterQCMetrics():
         self.logger.info('[QC] Finished QC filter computation for sample "{}", writing done flag to "{}"'.format(self.sample_name, done_path))
         
     def _merge_flag_lists(self,*args):
-        """Combine every stage's flag columns into the sample's removal record.
-
-        Returns:
-            list[str]: Flag columns, in cascade order.
-        """
+        """Combine stage flag columns (None, a string, or an iterable) into one
+        de-duplicated list. The order is not preserved."""
         merged = []
         for arg in args:
             if arg is None:

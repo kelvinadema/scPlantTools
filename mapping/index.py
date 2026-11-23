@@ -12,30 +12,19 @@ from shared.utils import run_cmd, log_exceptions
 
 
 class IndexBuilder:
-    """
-    IndexBuilder
-    ------------
+    """Build a mapper index from an index_config.yaml entry.
 
-    Interface for building indices for single-cell RNA-seq mappers:
-    - alevin-fry (via simpleaf)
-    - kallisto|bustools
-    - STARsolo
-
-    Each method runs the appropriate external tool with reasonable defaults and optional overrides.
-    Configurations are extracted from index_config.yaml.
+    alevin-fry (via simpleaf) is the implemented path. The kallisto|bustools and
+    STARsolo builders are placeholders: those mappers are not implemented end to
+    end and are blocked by the mapper gate in mapping.main.validate_samples.
     """
     def __init__(self, gtf_path : str, genome_path: str, out_path: str, work_dir: str=None):
-        """
-        Initialize the IndexBuilder.
+        """`gtf_path`/`genome_path` may be lists, merged into one reference.
 
-        Parameters:
-        - gtf_path (str or Path): Path to the input GTF annotation file.
-        - genome_path (str or Path): Path to the reference genome FASTA file.
-        - out_path (str or Path): Directory to write output index files.
-        - work_dir (str or Path, optional): Scratch root for index building. Falls
-          back to $TMPDIR (set per-job by SLURM) then the system temp dir. piscem
-          index builds are unreliable on networked filesystems, so the build runs
-          here and is copied to out_path afterwards.
+        `work_dir` is the scratch root for the build, falling back to $TMPDIR (set
+        per-job by SLURM) then the system temp dir. piscem index builds are
+        unreliable on networked filesystems, so the build runs there and is
+        copied to `out_path` afterwards.
         """
 
         self.logger = logging.getLogger('SingleCellMappingPipeline')
@@ -56,15 +45,7 @@ class IndexBuilder:
         return Path(path.anchor or '.')
 
     def _same_filesystem(self, a: Path, b: Path) -> bool:
-        """Whether two paths sit on the same filesystem, so a rename would be atomic.
-
-        Args:
-            a (Path): First path.
-            b (Path): Second path.
-
-        Returns:
-            bool: True when they share a device.
-        """
+        """Whether two paths sit on the same filesystem, so a rename would be atomic."""
         try:
             return os.stat(str(self._nearest_existing(a))).st_dev == os.stat(str(self._nearest_existing(b))).st_dev
         except OSError:
@@ -121,11 +102,7 @@ class IndexBuilder:
 
     @log_exceptions()
     def _prepare_reference_files(self):
-        """Resolve this index's FASTA/GTF, merging multiple references when asked.
-
-        Returns:
-            tuple: (fasta (Path), gtf (Path)).
-        """
+        """Resolve this index's GTF/FASTA, merging multiple references; returns (gtf, fasta)."""
         gtf_paths = [self.gtf_path] if isinstance(self.gtf_path, str) else self.gtf_path
         genome_paths = [self.genome_path] if isinstance(self.genome_path, str) else self.genome_path
 
@@ -143,7 +120,6 @@ class IndexBuilder:
             temp_dir.mkdir(parents=True, exist_ok=True)
             self.logger.info('[INDEX] Merging {} references under "{}"'.format(len(genome_paths), temp_dir))
 
-            # Set merged paths
             merged_gtf = temp_dir / '_merged.gtf'
             merged_fasta = temp_dir / '_merged.fasta'
 
@@ -161,13 +137,7 @@ class IndexBuilder:
 
     @log_exceptions()
     def _compute_genomeSAindexNbases(self) -> int:
-        """
-        Compute STAR's recommended value for --genomeSAindexNbases
-        based on the total length of the reference genome.
-
-        Returns:
-        - int: Computed value for --genomeSAindexNbases (minimum 4, max 14)
-        """
+        """STAR's recommended --genomeSAindexNbases for this genome length, clamped to 4..14."""
         genome_size = sum(len(record.seq) for record in SeqIO.parse(self.genome_path, "fasta"))
         genomeSAindex_size = max(int(min(14, (math.log2(genome_size)/2) - 1)), 4)
         return genomeSAindex_size
@@ -175,13 +145,7 @@ class IndexBuilder:
     @log_exceptions()
     def build_alevin_index(self, threads: int = 16, extra_args=None) -> None:
         """
-        Build an index for alevin-fry via `simpleaf`.
-
-        This method runs `simpleaf index` with common defaults
-
-        Parameters:
-        - threads (int): Number of threads to use (default: 16)
-        - extra_args (list of str, optional): Additional arguments to pass to simpleaf index
+        Build an index for alevin-fry via `simpleaf index`.
 
         `--ref-type` and `--rlen` come from the index entry's `extra_index_args`
         rather than being hardcoded here; simpleaf rejects a flag given twice.
@@ -189,15 +153,11 @@ class IndexBuilder:
         Targets simpleaf >= 0.16, where piscem is the default and `--use-piscem`
         no longer exists (pass `--no-piscem` via extra_index_args to opt out).
 
-        `--work-dir` is set explicitly under the scratch root. simpleaf passes it
-        through to `piscem build`, and both default it to the *relative* path
-        `./workdir.noindex` -- so leaving it unset drops piscem's temporary build
-        files into whatever the process cwd happens to be. batch_scripts/run_mapper.sh cds to the
-        repo root, so that is the repo root on Lustre: the exact networked-filesystem
-        placement the scratch staging in build_if_missing exists to avoid, and a
-        stray `workdir.noindex/` left behind at the top of the tree after every
-        build. Skipped if the caller already supplied the flag, since simpleaf
-        rejects a flag given twice.
+        `--work-dir` is set explicitly under the scratch root unless the caller
+        supplied it: simpleaf and `piscem build` default it to the relative
+        `./workdir.noindex`, i.e. the cwd -- the repo root on networked storage
+        when launched from batch_scripts/run_mapper.sh, which the scratch staging
+        exists to avoid.
         """
         extra_args = [str(a) for a in extra_args] if extra_args else []
         cmd = ['simpleaf', 'index', '--output', str(self.out_path), '--fasta', str(self.genome_path), '--gtf', str(self.gtf_path), '--threads', str(threads)]
@@ -221,15 +181,11 @@ class IndexBuilder:
     @log_exceptions()
     def build_kallisto_index(self, t2g_path: str = 't2g.txt', f1_path: str = 'cdna.fasta', extra_args=None) -> None:
         """
-        Build a kallisto|bustools index using `kb ref`.
+        Build a kallisto|bustools index using `kb ref`. Placeholder: kb is not
+        implemented end to end.
 
-        This method assumes that `kb ref` will generate the transcript-to-gene map
-        (t2g.txt) and cDNA FASTA (cdna.fasta) automatically if paths are provided.
-
-        Parameters:
-        - t2g_path (str): Output path for the generated transcript-to-gene map file (default: 't2g.txt')
-        - f1_path (str): Output path for the generated cDNA FASTA file (default: 'cdna.fasta')
-        - extra_args (list of str, optional): Additional arguments to pass to kb (e.g., ['--workflow', 'nac'])
+        Assumes `kb ref` writes the transcript-to-gene map (`t2g_path`) and cDNA
+        FASTA (`f1_path`) itself.
         """
         index_path = self.out_path / "kb_index.idx"
         cmd = ['kb', 'ref', str(self.genome_path), str(self.gtf_path), '-i', str(index_path), '-g', str(t2g_path), '-f1', str(f1_path)]
@@ -241,12 +197,9 @@ class IndexBuilder:
     @log_exceptions()
     def build_star_index(self, extra_args=None) -> None:
         """
-        Build a STARsolo index by running STAR's genomeGenerate mode.
-
-        Computes --genomeSAindexNbases based on input genome size.
-
-        Parameters:
-        - extra_args (list of str, optional): Additional arguments to pass to STAR
+        Build a STARsolo index with STAR's genomeGenerate mode, sizing
+        --genomeSAindexNbases from the genome. Placeholder: STARsolo is not
+        implemented end to end.
         """
         sa_index_size = self._compute_genomeSAindexNbases()
         cmd = ['STAR', '--runMode', 'genomeGenerate', '--genomeDir', str(self.out_path), '--genomeFastaFiles', str(self.genome_path), '--sjdbGTFfile', str(self.gtf_path), '--runThreadN', '16', '--genomeSAindexNbases', str(sa_index_size)]
@@ -261,15 +214,7 @@ class IndexBuilder:
 
         Treats any existing path as a finished index, which is why the build stages
         through scratch and renames atomically -- a killed build must leave nothing
-        rather than a truncated index.
-
-        Args:
-            mapper (str): Which mapper's index to build.
-            extra_args (list[str], optional): Passed through to the builder.
-            force (bool): Rebuild even if the path exists.
-
-        Returns:
-            Path: The index directory.
+        rather than a truncated index. `force` rebuilds even if the path exists.
         """
 
         if self.out_path.exists() and not force:

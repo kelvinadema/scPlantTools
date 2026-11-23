@@ -27,24 +27,15 @@ from shared.validate import validate_mapping, validate_integration, emit_schemas
 
 
 def main(argv=None) -> int:
-    """CLI entry point: preflight the config tree, or emit the editor schemas.
-
-    Args:
-        argv (list[str], optional): Argument vector.
-
-    Returns:
-        int: 0 when nothing blocking was found, else 1.
-    """
+    """CLI entry point: preflight the config tree, or emit the editor schemas."""
     parser = argparse.ArgumentParser(description='Validate the pipeline config tree')
     parser.add_argument('-c', '--config', help='Path to pipeline_config.yaml')
     parser.add_argument('--cohort', help='Validate the sheet this cohort selects '
                                         '(see `cohorts:` in the pipeline config).')
     parser.add_argument('--icfg', help='Also validate this integration_config.yaml')
-    # Deliberately NOT defaulted from -c. pipeline_config.yaml routinely points
-    # `samples:` at a dev subset (currently sample_subset.yaml, one sample) while
-    # integration runs against the full sample_metadata.yaml, so deriving it
-    # produced a wall of "sample not in the sample sheet" errors that were an
-    # artefact of the wrong sheet rather than anything wrong with the config.
+    # Deliberately NOT defaulted from -c: pipeline_config.yaml often points
+    # `samples:` at a dev subset while integration runs against the full sheet,
+    # so deriving it yields spurious "sample not in the sample sheet" errors.
     parser.add_argument('--scfg', help='Sample sheet to validate --icfg against '
                                        '(usually configs/sample_metadata.yaml)')
     parser.add_argument('--emit-schemas', action='store_true',
