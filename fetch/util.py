@@ -4,8 +4,9 @@ Deliberately dependency-light: HTTP is done with the standard library
 (``urllib``) and the big FASTQ transfers shell out to ``curl``. The only
 third-party import is ``yaml`` (for emitting the sample-sheet fragment), which
 is already present in the ``scFetch`` env. Nothing here imports from
-``shared/`` so the tool can run in its own small conda env without dragging in
-the mapping stage's scientific stack.
+``shared/``: fetch keeps its own logger (timestamped, to stderr, appending per
+run id), run id and a streaming ``run_cmd`` rather than ``shared.utils``'
+captured one.
 """
 
 from __future__ import annotations
@@ -58,11 +59,7 @@ def setup_logger(log_file: str | None = None, level: int = logging.INFO) -> logg
 
 
 def log() -> logging.Logger:
-    """The fetch stage's logger.
-
-    Returns:
-        logging.Logger: The logger.
-    """
+    """The fetch stage's logger."""
     return logging.getLogger(LOGGER_NAME)
 
 
@@ -131,14 +128,7 @@ def http_get(
 # Subprocess
 # ---------------------------------------------------------------------------
 def which(binary: str) -> str | None:
-    """Path to a binary on PATH, or None.
-
-    Args:
-        binary (str): Binary name.
-
-    Returns:
-        str or None: Its path.
-    """
+    """Path to a binary on PATH, or None."""
     from shutil import which as _which
     return _which(binary)
 
@@ -178,13 +168,8 @@ def genus_dir(scientific_name: str) -> str:
 # TSV manifest IO
 # ---------------------------------------------------------------------------
 def write_tsv(path: str, rows: list[dict], fieldnames: list[str]) -> None:
-    """Write rows to a TSV.
-
-    Args:
-        path (Path): Destination.
-        rows (iterable[dict]): The rows.
-        fieldnames (list[str], optional): Column order.
-    """
+    """Write rows to a TSV in `fieldnames` order (extra keys are ignored),
+    creating the parent directory."""
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames, delimiter="\t", extrasaction="ignore")
@@ -194,14 +179,7 @@ def write_tsv(path: str, rows: list[dict], fieldnames: list[str]) -> None:
 
 
 def read_tsv(path: str) -> list[dict]:
-    """Read a TSV into a list of dicts.
-
-    Args:
-        path (Path): The file.
-
-    Returns:
-        list[dict]: The rows.
-    """
+    """Read a TSV into a list of dicts."""
     with open(path, newline="") as fh:
         return list(csv.DictReader(fh, delimiter="\t"))
 

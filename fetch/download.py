@@ -32,26 +32,14 @@ _INDEX_MAX_LEN = 12  # I1/I2 sample indices are 8bp (dual up to ~10)
 # Transfer primitives
 # ---------------------------------------------------------------------------
 def _with_scheme(url: str) -> str:
-    """Prefix a bare host path with a scheme so curl accepts it.
-
-    Args:
-        url (str): The URL as given.
-
-    Returns:
-        str: The URL with a scheme.
-    """
+    """Prefix a bare host path with a scheme so curl accepts it."""
     return url if url.startswith(("http://", "https://", "ftp://")) else "https://" + url
 
 
 def _curl(url: str, dest: str) -> None:
     """Fetch one URL to `dest` with curl, resuming a partial file.
 
-    Args:
-        url (str): Source.
-        dest (Path): Destination.
-
-    Returns:
-        bool: Whether the download succeeded.
+    Returns nothing; a failed transfer raises RuntimeError (via `run_cmd`).
     """
     # --retry-all-errors is load-bearing: ENA throttles/blocks an IP after a
     # sustained multi-hour transfer and then returns a *non-transient* HTTP error
@@ -88,14 +76,7 @@ def _remote_size(url: str) -> int | None:
 
 
 def _md5(path: str) -> str:
-    """md5 of a file, read in chunks.
-
-    Args:
-        path (Path): The file.
-
-    Returns:
-        str: Hex digest.
-    """
+    """Hex md5 of a file, read in chunks."""
     h = hashlib.md5()
     with open(path, "rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
@@ -107,15 +88,9 @@ def _md5(path: str) -> str:
 # Route: direct URL download (ENA submitter/archive files, CNGB, or any host)
 # ---------------------------------------------------------------------------
 def _download_urls(record: dict, dest_dir: str, check_md5: bool) -> list[str]:
-    """Fetch a record's FASTQs from their direct URLs.
+    """Fetch a record's FASTQs from their direct URLs; returns the local paths.
 
-    Args:
-        record (dict): The run record.
-        dest_dir (Path): Where to write.
-        check_md5 (bool): Verify against the recorded checksums.
-
-    Returns:
-        list[Path]: The downloaded files.
+    With `check_md5`, each file is verified against the recorded checksum.
     """
     urls = [u for u in record["file_urls"].split(";") if u]
     md5s = [m for m in record.get("file_md5", "").split(";") if m]
@@ -131,8 +106,8 @@ def _download_urls(record: dict, dest_dir: str, check_md5: bool) -> list[str]:
         dest = os.path.join(dest_dir, fname)
 
         # Decide skip / resume / (re)download by comparing the file on disk to
-        # the remote size. The old code skipped any file with size > 0, so an
-        # interrupted transfer left a truncated FASTQ that was silently reused.
+        # the remote size. (Earlier versions skipped any non-empty file, so a
+        # FASTQ truncated by an interrupted transfer could be reused silently.)
         expected = _remote_size(url)
         need_download = True
         if os.path.exists(dest):
@@ -172,16 +147,9 @@ def _download_urls(record: dict, dest_dir: str, check_md5: bool) -> list[str]:
 # Route: SRA toolkit reconstruction
 # ---------------------------------------------------------------------------
 def _download_sra(record: dict, dest_dir: str, threads: int, scratch: str) -> list[str]:
-    """Fetch a record via sra-tools, converting to FASTQ.
+    """Fetch a record via sra-tools, converting to gzipped FASTQ; returns the paths.
 
-    Args:
-        record (dict): The run record.
-        dest_dir (Path): Where to write.
-        threads (int): Worker threads.
-        scratch (Path, optional): Scratch root for the conversion.
-
-    Returns:
-        list[Path]: The downloaded files.
+    `scratch` holds the .sra and fasterq-dump's temporary files.
     """
     run = record["run_accession"]
     for tool in ("prefetch", "fasterq-dump", "pigz"):
@@ -242,17 +210,10 @@ def _download_sra(record: dict, dest_dir: str, threads: int, scratch: str) -> li
 # ---------------------------------------------------------------------------
 def download_run(record: dict, dest_dir: str, *, threads: int, scratch: str,
                  check_md5: bool = False) -> list[str]:
-    """Fetch one run, preferring direct URLs and falling back to SRA.
+    """Fetch one run by the route its manifest `source` names; returns the local paths.
 
-    Args:
-        record (dict): The run record.
-        dest_dir (Path): Where to write.
-        threads (int): Worker threads.
-        scratch (Path, optional): Scratch root.
-        check_md5 (bool): Verify against the recorded checksums.
-
-    Returns:
-        list[Path]: The downloaded files.
+    `ena_submitted`, `ena_fastq` and `url` download the recorded URLs directly;
+    `sra` goes through sra-tools. Any other source raises RuntimeError.
     """
     os.makedirs(dest_dir, exist_ok=True)
     source = record["source"]

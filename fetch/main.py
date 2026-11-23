@@ -43,14 +43,7 @@ DEFAULT_SHEET_DIR = "configs/external"
 # metadata subcommand
 # ---------------------------------------------------------------------------
 def cmd_metadata(args: argparse.Namespace) -> int:
-    """Resolve a dataset accession to a per-run metadata TSV.
-
-    Args:
-        args (argparse.Namespace): Parsed arguments.
-
-    Returns:
-        int: Process exit status.
-    """
+    """Resolve an accession (or --url list) to a curatable per-run TSV; returns the exit status."""
     if bool(args.accession) == bool(args.url):
         log().error("Provide exactly one of: an accession, or --url URL... "
                     "(got %s).", "both" if args.accession else "neither")
@@ -101,26 +94,14 @@ def cmd_metadata(args: argparse.Namespace) -> int:
 # download subcommand
 # ---------------------------------------------------------------------------
 def _dest_dir(root: str, record: dict) -> str:
-    """Where one run's FASTQs belong under the fetch root.
-
-    Args:
-        root (Path): Fetch root.
-        record (dict): The run record.
-
-    Returns:
-        Path: The destination directory.
-    """
+    """Where one run's FASTQs belong: `{root}/{species}/{dataset}/{sample_name}`."""
     return os.path.join(root, record["species"], record["dataset"], record["sample_name"])
 
 
 def cmd_download(args: argparse.Namespace) -> int:
-    """Download every run in a metadata TSV and write a sample sheet.
+    """Download every `download=yes` run in a metadata TSV and write the sample sheet(s).
 
-    Args:
-        args (argparse.Namespace): Parsed arguments.
-
-    Returns:
-        int: Process exit status.
+    Failures are collected per run; returns 1 if any run failed, else 0.
     """
     records = [r for r in read_tsv(args.metadata) if is_truthy(r.get("download"))]
     if not records:
@@ -214,14 +195,7 @@ def _emit_sheets(grouped: dict, records: list[dict], args: argparse.Namespace) -
 
 
 def _majority(votes: list[str]) -> str | None:
-    """The most common value in `votes`, for collapsing per-run fields.
-
-    Args:
-        votes (iterable): The values.
-
-    Returns:
-        The most common value, or None when there are none.
-    """
+    """The most common value in `votes`, or None when there are none."""
     if not votes:
         return None
     return max(set(votes), key=votes.count)
@@ -231,11 +205,7 @@ def _majority(votes: list[str]) -> str | None:
 # argparse
 # ---------------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
-    """The `fetch` argument parser.
-
-    Returns:
-        argparse.ArgumentParser: The parser.
-    """
+    """The `fetch` argument parser."""
     p = argparse.ArgumentParser(
         prog="python -m fetch.main",
         description="Fetch external scRNA-seq datasets from GEO/SRA/ENA.")
@@ -291,19 +261,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point for the fetch stage.
-
-    Args:
-        argv (list[str], optional): Argument vector.
-
-    Returns:
-        int: Process exit status.
-    """
+    """CLI entry point for the fetch stage; returns the exit status."""
     args = build_parser().parse_args(argv)
-    # One log file per run, in its own logs/fetch/ subdirectory -- same
-    # [pipeline]-[run_id].log convention as shared.utils.pipeline_log_path,
-    # kept as a separate implementation here since fetch deliberately
-    # imports nothing from shared/ (see util.py's own module docstring).
+    # One log file per run under logs/fetch/, named like
+    # shared.utils.pipeline_log_path; fetch keeps its own logging (see util.py).
     setup_logger(log_file=os.path.join("logs", "fetch", f"fetch-{run_id()}.log"))
     try:
         return args.func(args)

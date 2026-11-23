@@ -47,14 +47,8 @@ ENA_FIELDS = [
 # Accession classification + GEO resolution
 # ---------------------------------------------------------------------------
 def classify(accession: str) -> str:
-    """Which archive an accession belongs to, from its prefix.
-
-    Args:
-        accession (str): The accession.
-
-    Returns:
-        str: The archive name.
-    """
+    """Accession kind from its prefix: 'geo_series', 'geo_sample', 'study',
+    'experiment', 'run', 'sample' or 'unknown'."""
     acc = accession.strip().upper()
     if acc.startswith("GSE"):
         return "geo_series"

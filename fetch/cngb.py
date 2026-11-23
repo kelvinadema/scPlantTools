@@ -52,14 +52,7 @@ _GEX_TOKENS = ("cdna", "gex", "rna", "expression", "transcript")
 
 
 def _is_fastq(name: str) -> bool:
-    """Whether a filename looks like a FASTQ.
-
-    Args:
-        name (str): Filename.
-
-    Returns:
-        bool: True when it is a FASTQ.
-    """
+    """Whether a filename looks like a (gzipped) FASTQ."""
     return bool(_FASTQ.search(name))
 
 
@@ -71,14 +64,7 @@ def _dir_url(url: str) -> str:
 
 
 def _library_note(filenames: list[str]) -> str:
-    """A short note describing a run's file layout, for the sample sheet.
-
-    Args:
-        filenames (list[str]): The run's files.
-
-    Returns:
-        str: The note.
-    """
+    """A short note classifying a run's files (feature/oligo, GEX, or unknown) for the manifest."""
     low = " ".join(filenames).lower()
     if any(t in low for t in _FEATURE_TOKENS):
         return "feature/oligo library -- NOT gene expression, do not map as GEX"

@@ -61,12 +61,7 @@ def sample_entry(*, fastq1: list[str], fastq2: list[str], batch: str,
 
 
 def write_sheet(doc: OrderedDict, path: str) -> None:
-    """Write a fetched dataset's sample sheet.
-
-    Args:
-        doc (dict): The sheet contents.
-        path (Path): Destination.
-    """
+    """Write a fetched dataset's sample sheet, with the schema modeline and a review header."""
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     header = (
         # Modeline on line 1 (repo convention). One extra '../' vs the top-level
