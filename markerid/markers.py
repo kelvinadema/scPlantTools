@@ -51,7 +51,7 @@ class MarkerRun:
                  labels_tsv=None, labels_col='label', labels_cell_col='cell',
                  labels_exclude=DEFAULT_LABELS_EXCLUDE, min_cells_per_group=0):
         """
-        `labels_tsv` (added 2026-09-13, chapter 3 C5): a TSV with one row per
+        `labels_tsv`: a TSV with one row per
         cell (`labels_cell_col`, either the bare `.obs_names` or
         `<sample>.<barcode>`) and a label column (`labels_col`). Cells absent
         from the table or carrying a label in `labels_exclude` are DROPPED
@@ -99,7 +99,8 @@ class MarkerRun:
     # ------------------------------------------------------------- preparation
 
     def prepare(self):
-        """Load the object and check the keys this method needs are present."""
+        """Prepare the object: restore numeric `.obs`, attach external labels, drop
+        small groups, filter and normalise genes, and resolve the latent space."""
         self._coerce_numeric_obs()
         self._attach_external_labels()
         self._drop_small_groups()
@@ -273,11 +274,7 @@ class MarkerRun:
     # ---------------------------------------------------------------- accessors
 
     def latent(self):
-        """The latent representation this method ranks against.
-
-        Returns:
-            np.ndarray: Cells x latent dimensions.
-        """
+        """The latent representation this method ranks against (cells x dims)."""
         return np.asarray(self.adata.obsm[self.latent_key], dtype=np.float64)
 
     def expression(self, genes_by_cells=False):
@@ -287,23 +284,12 @@ class MarkerRun:
             X.T if genes_by_cells else X)
 
     def expression_subset(self, genes):
-        """The expression matrix restricted to `genes`.
-
-        Args:
-            genes (list[str]): Gene names.
-
-        Returns:
-            The subset matrix.
-        """
+        """The normalised expression matrix restricted to `genes` (unknown names skipped)."""
         idx = self.adata.var_names.get_indexer(np.asarray(genes))
         return self.adata.layers[self.norm_layer][:, idx[idx >= 0]]
 
     def require_cluster_key(self):
-        """The cluster column, raising if this method needs one and it is absent.
-
-        Returns:
-            str: The `.obs` column name.
-        """
+        """The cluster column, raising if this method needs one and it is absent."""
         if not self.cluster_key:
             raise ValueError(
                 f'{self.sample}: method {self.method!r} is cluster-dependent and '
@@ -319,11 +305,7 @@ class MarkerRun:
         return None if self.counts_layer == 'X' else self.counts_layer
 
     def umi_counts_key(self):
-        """The layer holding UMI counts for this run.
-
-        Returns:
-            str: Layer name.
-        """
+        """The numeric `.obs` column `{counts_layer}_total_counts`, or None if absent."""
         key = f'{self.counts_layer}_total_counts'
         if key in self.adata.obs and pd.api.types.is_numeric_dtype(self.adata.obs[key]):
             return key
@@ -332,15 +314,8 @@ class MarkerRun:
     # --------------------------------------------------------------------- run
 
     def run(self, n_genes=50, write=True, **kwargs):
-        """Rank genes with the configured method and optionally write the TSV.
-
-        Args:
-            n_genes (int): Genes to keep per group.
-            write (bool): Whether to write the output TSV.
-
-        Returns:
-            pandas.DataFrame: The ranking.
-        """
+        """Rank genes with the configured method (`n_genes` per group); returns the
+        ranking and, with `write`, writes the TSV."""
         logger.info('[MARKERS] %s: running %s', self.sample, self.method)
         df = METHODS[self.method](self, n_genes=n_genes, **kwargs)
         df = self._finalize(df)
@@ -349,13 +324,9 @@ class MarkerRun:
         return df
 
     def _finalize(self, df):
-        """Sort, trim and standardize the ranking's columns.
+        """Check the ranking against MARKER_COLUMNS and make `clusterName` a string.
 
-        Args:
-            df (pandas.DataFrame): The raw ranking.
-
-        Returns:
-            pandas.DataFrame: The finalized ranking.
+        An empty or missing ranking becomes an empty frame with the contract columns.
         """
         if df is None or df.empty:
             logger.warning('[MARKERS] %s: %s produced no markers',
@@ -372,14 +343,8 @@ class MarkerRun:
         return df
 
     def write(self, df):
-        """Write the ranking to this run's TSV.
-
-        Args:
-            df (pandas.DataFrame): The finalized ranking.
-
-        Returns:
-            Path: The written file.
-        """
+        """Write `{out_dir}/{sample}.tsv` (and `{sample}_module_scores.tsv` when the
+        method produced module scores); returns the TSV path."""
         outpath = self.out_dir / self.outfn
         df.to_csv(outpath, sep='\t', index=False)
         logger.info('[MARKERS] Wrote %s', outpath)

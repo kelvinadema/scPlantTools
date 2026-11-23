@@ -61,10 +61,10 @@ def run_sample(adata_path, sample, methods, cluster_key, latent_key, counts_key,
 
 
 def main():
-    """CLI entry point: rank marker genes for one sample and method.
+    """CLI entry point: run every requested method on every sample.
 
-    Returns:
-        int: Process exit status.
+    A failed sample is logged and the rest continue; any failure ends the
+    process with SystemExit(1).
     """
     parser = argparse.ArgumentParser(description='Identify marker genes')
     parser.add_argument('--method', required=True, action='append',
@@ -77,8 +77,8 @@ def main():
                              'in the same order as --anndata')
     parser.add_argument('--clusterkey', help='.obs key with cluster labels '
                                              f'(required for {", ".join(CLUSTER_DEPENDENT)}, cosg)')
-    # External labels (2026-09-13): rank on a declared label file instead of
-    # an .obs cluster key. Cells absent from the table, or labelled with one of
+    # External labels: rank on a declared label file instead of an .obs
+    # cluster key. Cells absent from the table, or labelled with one of
     # --labels-exclude, are dropped before gene filtering.
     parser.add_argument('--labels-tsv', '--labelstsv', dest='labels_tsv',
                         help='TSV with one row per cell; makes the cluster-dependent '
@@ -114,11 +114,7 @@ def main():
         parser.error(f'--anndata ({len(paths)}) and --name ({len(names)}) '
                      f'must have the same length')
 
-    # One log file per run, in its own logs/markerID/ subdirectory -- see
-    # shared.utils.pipeline_log_path for why. This used to be a fixed
-    # 'marker_info.log' with no run id, so every run appended to the same
-    # file forever (setup_logger's FileHandler defaults to append mode)
-    # instead of getting its own.
+    # One log file per run under logs/markerID/; see shared.utils.pipeline_log_path.
     log_file = pipeline_log_path('markerID')
     setup_logger(name='MarkerLogging', log_file=log_file, level=logging.INFO)
 

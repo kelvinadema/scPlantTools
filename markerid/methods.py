@@ -8,7 +8,7 @@ contract (see markers.py::MARKER_COLUMNS):
     clusterName | rank | gene | score | method   (+ method-specific columns)
 
 Cluster-dependent methods put the cluster label in `clusterName`;
-cluster-antagonistic ones put a gene-module id there, so both feed the
+cluster-free ones put a gene-module id there, so both feed the
 annotation stage through the same path.
 """
 
@@ -117,11 +117,9 @@ def run_hotspot(run, n_genes=None, n_neighbors=30, model='danb', fdr_threshold=0
     """
     import hotspot
 
-    # BOTH phases run in parallel; they are ~50/50 of hotspot's runtime and
-    # hotspot is 83-90% of the whole marker run. Requires the `forkserver` start
-    # method -- fork()ing a process with live OpenMP threads is a reliable
-    # SIGSEGV, which is what the old jobs=1 pin was really avoiding. Results are
-    # bit-identical. Memory, not CPU, is what caps `jobs`. See
+    # Both phases run in parallel under the `forkserver` start method:
+    # fork()ing a process with live OpenMP threads is a reliable SIGSEGV.
+    # Results are bit-identical; memory, not CPU, caps `jobs`. See
     # docs/decisions/hotspot-parallelism.md.
     n_jobs = jobs if jobs is not None else max(int(getattr(run, 'n_jobs', 1) or 1), 1)
     if n_jobs > 1:
@@ -132,11 +130,9 @@ def run_hotspot(run, n_genes=None, n_neighbors=30, model='danb', fdr_threshold=0
         logger.info('[MARKERS] Hotspot: %d job(s), start method %r',
                     n_jobs, multiprocessing.get_start_method())
 
-    # Applied at ANY job count, not just n_jobs > 1. The kNN seed half of it is
-    # what makes a hotspot run reproducible at all, and that matters as much to
-    # a serial run as a parallel one -- see markerid/hotspot_patch.py
-    # for both patches and for why the pre-patch marker files cannot be
-    # reproduced.
+    # Applied at ANY job count: the kNN seed is what makes a hotspot run
+    # reproducible at all, serial or parallel. See markerid/hotspot_patch.py,
+    # including why marker files made before the patch cannot be reproduced.
     from .hotspot_patch import apply as _apply_hotspot_patch
     _apply_hotspot_patch(seed=getattr(run, 'random_state', 42))
 
@@ -154,11 +150,9 @@ def run_hotspot(run, n_genes=None, n_neighbors=30, model='danb', fdr_threshold=0
         return pd.DataFrame(columns=['clusterName', 'rank', 'gene', 'score', 'method'])
 
     top = significant.sort_values('Z', ascending=False).head(n_top_genes).index
-    # The phase that used to segfault under fork -- see the block above for why
-    # forkserver removes the cause rather than papering over it. If this ever
-    # crashes again, the diagnostic is whether it survives with n_jobs=1: a
+    # If this phase ever crashes, check whether it survives with n_jobs=1: a
     # SIGSEGV with no Python traceback shortly after "Computing pair-wise local
-    # correlation..." is the old fork-with-live-OpenMP-threads signature.
+    # correlation..." is the fork-with-live-OpenMP-threads signature.
     hs.compute_local_correlations(top, jobs=n_jobs)
     assignments = hs.create_modules(min_gene_threshold=min_module_size,
                                     core_only=True, fdr_threshold=fdr_threshold)
