@@ -1,10 +1,10 @@
-# Optional annotation and refinement
+# Annotation and refinement
 
-Annotation uses orthogroups, marker tables, and Plant Ontology; it is independent of the basic mapping/QC run. Keep the existing ontology assets, proteome versions, marker inputs, and patches when reproducing a result.
+Annotation assigns Plant Ontology cell types to clusters using marker genes from reference species, matched through orthogroups. It is optional and independent of mapping and QC. When reproducing a result, use the same ontology files, proteome versions and marker tables.
 
-Use `scAnnotationV3.12` for annotation and `scMarkersV3.12` for marker discovery. Refinement runs in `scIntegrationV1.12`. Follow [environment setup](../envs/README.md). The `sc` dispatcher selects these environments without importing the other stages into one interpreter.
+Annotation runs in `scAnnotationV3.12`, marker identification in `scMarkersV3.12` and refinement in `scIntegrationV1.12` (see [envs/README.md](../envs/README.md)). The `sc` command selects the right environment for each.
 
-The preserved `configs/annotation_config.yaml` documents the study's species profiles and inputs. Prepare your local configuration explicitly and inspect available arguments:
+`configs/annotation_config.yaml` holds the species profiles and inputs of our own studies. Write a local configuration and run:
 
 ```bash
 python -m annotation.main --help
@@ -13,10 +13,10 @@ python -m annotation.main --acfg configs/local/annotation.yaml --orthofinder-onl
 python -m annotation.main --acfg configs/local/annotation.yaml
 ```
 
-Annotation's `--validate-only` prepares/checks reference inputs and may write caches; it is not a read-only source inspection. Orthofinder-only prepares the orthology stage without requiring all downstream marker outputs. Species profiles can select the target and remove it from the reference pool.
+`--validate-only` prepares and checks the reference inputs and may write cache files. `--orthofinder-only` runs the orthology step without the marker inputs needed for the full run. A species profile can set the target species and exclude it from the reference set.
 
-Review annotations through the existing review workflow (`python -m annotation.review --help`). Refinement uses the resulting decisions and its own config (`python -m refine.main --help`). Existing `seeds.quantile_scope` and per-target seed overrides remain supported; no seed policy or training method was changed for release preparation.
+The annotation results are reviewed on an HTML page (`python -m annotation.review --help`), where genesets from the different marker methods are grouped into cell types. Refinement uses that grouping to seed scANVI (`python -m refine.main --help`). The seeding rule can be set globally or per target with `seeds.quantile_scope`.
 
-The [marker port notes](markerid-porting.md), [proteome preparation rationale](decisions/proteome-preparation.md), and [decision documents](decisions/) preserve scientific context. Old study handoff notes are historical records rather than a statement that current functionality is unimplemented.
+Background on the methods is in the [marker port notes](markerid-porting.md), the [proteome preparation notes](decisions/proteome-preparation.md) and the other [design notes](decisions/).
 
-Standalone maintenance utilities under `integration/` include barcode-index backfills and label injection. They are not automatically part of a new annotation run. Inspect their explicit targets and dry-run behavior before using them on existing artifacts.
+`integration/` also contains a few one-off maintenance scripts (barcode index backfills and label injection into existing objects). They are not part of a normal annotation run; read their targets and dry-run options before using them on existing results.

@@ -1,14 +1,14 @@
-# Preparing a release without changing results
+# Preparing a release
 
-The supported distribution is a source checkout with per-stage conda environments. The package metadata is tooling/build metadata, not a complete installed runtime. Keep `.root`, the `sc` dispatcher, stage packages, shared helpers, configuration schemas, and bundled ontology/patch assets.
+The pipeline is distributed as a source checkout with one conda environment per stage. `pyproject.toml` declares the packages and test settings but does not install a working pipeline. A release must contain `.root`, the `sc` command, the stage packages, `shared/`, the configuration schemas and the bundled ontology and patch files.
 
-## Candidate contents
+## Contents
 
-Public files include the README, selected guides, scientific decision documents, maintained setup/launch helpers, tests, example configs, and current source. Private working notes, inspection reports, study-specific batch jobs, incomplete fetch sheets, data/results, indices, caches, and compiled binaries remain ignored. Existing study configurations are retained and clearly distinguished from the minimal example. Current untracked source files must be included when staging the release; the old commit does not represent the current pipeline.
+The repository contains the README and guides, the design notes, the setup and launch scripts that are maintained, the tests, the example configuration and the current source. Private notes, study-specific batch jobs, incomplete download sheets, data, results, indices, caches and compiled binaries are excluded by `.gitignore`. The study configurations under `configs/` are included as a record and are kept apart from the example.
 
-Git operations belong in the actual source checkout, not the execution workspace's symlink farm. Review `git status --short -uall` and the intended diff. No automated release command stages, commits, pushes, or runs production analyses.
+Run Git commands in the source checkout itself, not in a working directory that links to it. Review `git status --short -uall` and the diff before committing. None of the release tools stage, commit, push or run analyses.
 
-## Verification
+## Checks
 
 ```bash
 python tools/check_release.py
@@ -16,16 +16,16 @@ python -m sc test
 python -m sc test site
 ```
 
-`check_release.py` checks required files, public Markdown links, schema agreement, Python/shell syntax, and unintended source symlinks. CI runs the portable suite and the release check on the checkout. Site failures are reported separately; they do not justify deleting results or changing QC values. A full release run must execute the synthetic end-to-end suite rather than merely skip it for missing tools.
+`check_release.py` checks that the required files are present, that relative Markdown links resolve, that the schemas match `shared/config_spec.py`, that Python and shell files parse, and that no source file is a symbolic link. The GitHub Actions workflow runs it together with the portable tests. A release should run the end-to-end suite with the mapping tools installed, not skip it.
 
-Before publishing, inspect an exported candidate tree, not only the developer workspace. Test all public entry points/imports that matter in their existing stage environments. Keep KB/STARsolo explicitly unimplemented. License selection and the notice checks in [third-party inventory](third-party.md) remain owner decisions before an open-source release.
+Before publishing, check an exported copy of the tree rather than only the working directory, and import the entry points in their own environments. kb-python and STARsolo must remain marked as not implemented. The licence and the third-party notices listed in [third-party.md](third-party.md) still need to be settled.
 
-## Baseline and scientific preservation
+## Keeping existing results reproducible
 
-Before edits, archive the current source (including uncommitted/untracked modules), Git status/diff, exact environment package records, imported versions where package metadata disagrees, binary paths/hashes, and patch hashes. The September 2026 preparation captured these locally under `_snapshots/` outside the repository. Keep the archive private; it contains local working notes and paths.
+Before changing the source, archive the current source (including untracked files), the Git status and diff, the exact package lists of the environments, the versions that are actually imported where these differ from the package metadata, and the paths and hashes of the binaries and patches. For the September 2026 release preparation this archive is kept locally in `_snapshots/`, outside the repository, because it contains private notes and paths.
 
-Preserve active study YAML bytes, analysis modules, ontology/patch assets, and environment manifests. Config hashes currently include raw YAML bytes; reformatting comments can invalidate provenance expectations. Keep timestamps and old provenance inside existing artifacts intact. Store release provenance separately rather than rewriting H5AD files.
+Do not reformat the study YAML files: the configuration hash recorded in each output includes the raw YAML bytes, so changing comments changes the hash. Do not rewrite existing H5AD files to update their provenance; record release information separately.
 
-For operational changes, prove the successful analysis command, configuration resolution, binary selection, and environment remain equivalent. For an eventual numerical refactor, compare frozen inputs/intermediates in isolated outputs: ordered cell/gene identities, counts/layers, QC metrics and masks, doublet calls, and manual decisions. Seeds do not guarantee bitwise-identical GPU retraining; avoid retraining as an organizational action.
+A change to how the pipeline is run should leave the command, the resolved configuration, the selected binaries and the environments unchanged. A change to analysis code should be checked by running old and new code on the same frozen inputs into separate output directories and comparing cell and gene order, counts and layers, QC metrics and masks, doublet calls and manual decisions. GPU training is not bit-for-bit reproducible even with fixed seeds, so avoid retraining models when only reorganising code.
 
-Mapping sentinels and downstream model registries remain unchanged. New file layouts must preserve notebook links and `batch_scripts/lib/common.sh`. A result-directory cleanup is a separate task requiring producer/consumer tracing.
+Moving result directories requires tracing what reads them, including the notebooks repository and `batch_scripts/lib/common.sh`, and is a separate task.

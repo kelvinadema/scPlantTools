@@ -1,16 +1,16 @@
 # Batch scripts
 
-Submit from the logical execution root; `SCRNASEQ_ROOT` overrides it. Create `logs/` before `sbatch` so the scheduler can open its output files. Review the existing SLURM resource/account directives for your site.
+Submit from the repository root, or set `SCRNASEQ_ROOT`. Create `logs/` before calling `sbatch` so SLURM can write its output files, and adjust the resource and account directives for your cluster.
 
-| File | Role |
+| File | Purpose |
 |---|---|
-| `run_mapper.sh` | Maintained mapping launcher; forwards `--config`, `--cohort`, and other mapping arguments |
-| `lib/mapping_setup.sh` | Shared interactive/batch tool initialization; source after activating the mapping environment |
-| `lib/common.sh` | Existing launch helpers; also sourced by the sibling notebooks repository |
-| `run_refilter.sh` | Preserved **study-specific** sample list and parent-mismatch override; use the documented direct command for new datasets |
-| `run_integration.sh` | Preserved site/study invocation; use `python -m integration.main` for another target |
-| `run_annotation.sh` | Existing site launcher; inspect config and resource settings before reuse |
+| `run_mapper.sh` | Mapping launcher; passes `--config`, `--cohort` and any other arguments on to `mapping.main` |
+| `lib/mapping_setup.sh` | Tool setup for interactive and batch runs; source it after activating the mapping environment |
+| `lib/common.sh` | Shared launcher functions, also used by the notebooks repository |
+| `run_refilter.sh` | Manual refiltering with the sample list of one of our studies; for new data use the command in [outputs](../docs/outputs.md) |
+| `run_integration.sh` | Integration of one of our study targets; for other targets run `python -m integration.main` |
+| `run_annotation.sh` | Annotation launcher; check its configuration and resources before use |
 
-Other local scripts drive specific studies or maintenance and remain outside the public file set. Their locations and behavior have not been changed. The mapping and refilter launchers propagate the underlying process exit status, including failures.
+The mapping and refilter launchers exit with the status of the command they run, so failures are visible to SLURM. Other launchers used for specific studies are kept outside this repository.
 
-The portable setup path and generic commands are in [mapping setup](../docs/setup-mapping.md) and [outputs](../docs/outputs.md).
+The general setup and commands are described in [mapping setup](../docs/setup-mapping.md) and [outputs](../docs/outputs.md).

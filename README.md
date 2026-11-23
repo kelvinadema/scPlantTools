@@ -1,27 +1,34 @@
-# scRNAseq
+# scPlantTools
 
-Configurable mapping and quality control for plant single-cell and single-nucleus RNA-seq, with optional integration, marker discovery, annotation, and refinement workflows.
+A pipeline for mapping and quality control (QC) of plant single-cell and single-nucleus RNA-seq data, with optional stages for integration, marker gene identification, orthology-based cell type annotation and label refinement.
 
-The same mapping/QC implementation handles cells and nuclei through sample metadata, reference/chemistry configuration, and selectable QC profiles. Parameters remain explicit: modality-agnostic does not mean every species, preparation, or chemistry should use identical settings.
+Cells and nuclei go through the same mapping and QC code. Differences between preparations, species and chemistries are set in the sample sheet, the reference and chemistry definitions and the QC profiles, not in the code. The default QC settings were chosen for Medicago and Arabidopsis root data and should be checked before use on other material.
 
-## Supported scope
+## Stages
 
-| Component | Status |
-|---|---|
-| Mapping | `alevin`: simpleaf + piscem + alevin-fry |
-| Chemistries | 10x v2/v3, BD Rhapsody Enhanced Bead V2, DNBelab C4 |
-| QC | Configurable metrics and filters; `off`, `advisory`, and `filter` modes; HTML review and separate manual-refilter output |
-| Ambient RNA / doublets | Existing CellBender and Scrublet/SOLO workflows, configured per run |
-| KB / STARsolo | **Not implemented end-to-end.** Placeholders retained; execution is deliberately blocked. |
-| Optional downstream stages | Integration/reference mapping, marker identification, ontology annotation, refinement, public-data fetching |
+| Stage | Command | Conda environment |
+|---|---|---|
+| Mapping and QC | `python -m mapping.main` | `scMappingV3.12` |
+| Manual refiltering | `python -m mapping.refilter` | `scMappingV3.12` |
+| Integration and reference mapping | `python -m integration.main` | `scIntegrationV1.12` |
+| Marker identification | `python -m markerid.main` | `scMarkersV3.12` |
+| Annotation | `python -m annotation.main` | `scAnnotationV3.12` |
+| Refinement | `python -m refine.main` | `scIntegrationV1.12` |
+| Public data download | `python -m fetch.main` | `scFetch` |
 
-## Start here
+Mapping uses simpleaf, piscem and alevin-fry, keeping spliced, unspliced and ambiguous counts. Ambient RNA is removed with CellBender, doublets are scored with SOLO and Scrublet, and each sample gets an HTML report that can also be used to select cells for removal by hand. Every QC filter can be set to `off`, `advisory` (computed and reported, but removes no cells) or `filter`.
 
-Run from a **source checkout**, using the stage-specific conda environments in [envs/](envs/README.md). `pip install` is not a complete supported installation. The current scientific environments target Linux; configured CellBender/SOLO runs need a GPU. The documented CellBender and BD piscem patches are part of the reproducible setup.
+Supported chemistries are 10x v2 and v3, BD Rhapsody Enhanced Bead V2 and DNBelab C4. kb-python and STARsolo appear in the configuration as placeholders only; they are not implemented, and samples that request them are rejected before mapping starts.
 
-1. Follow [mapping setup](docs/setup-mapping.md), including environment creation and patch verification.
-2. Copy the [minimal example](configs/examples/minimal/README.md) to `configs/local/`. Set FASTQ, reference, whitelist, and environment locations. Check the species-specific organelle identifiers before using another plant reference.
-3. From the checkout root, in `scMappingV3.12`, initialize the mapping tools and validate the chosen run:
+## Installation
+
+Run the pipeline from a clone of this repository; it is not installed with `pip`. Each stage has its own conda environment, defined in [envs/](envs/README.md), because their dependencies cannot be combined. The environments target Linux, and CellBender and SOLO need a GPU. Two environments need an extra step after creation (a patched piscem for BD Rhapsody data and a CellBender patch); both are described in [envs/README.md](envs/README.md).
+
+## Quick start
+
+1. Create the environments and apply the patches as described in [mapping setup](docs/setup-mapping.md).
+2. Copy the [minimal example](configs/examples/minimal/README.md) to `configs/local/` and fill in the FASTQ, reference, whitelist and environment paths. If you work with a species other than Medicago, adapt the organelle gene identifiers.
+3. From the repository root, in `scMappingV3.12`, set up the mapping tools, validate the configuration and run:
 
 ```bash
 source batch_scripts/lib/mapping_setup.sh
@@ -31,24 +38,34 @@ python -m mapping.validate -c configs/local/pipeline.yaml
 python -m mapping.main -c configs/local/pipeline.yaml --build-indexes
 ```
 
-The example contains no FASTQs/reference data and does not run until those inputs and environment prefixes are supplied. It preserves existing default scientific parameters as a starting example, not a universal plant QC recommendation. GPU preflight can report unavailable CUDA on a login node; perform the run on the configured compute resource.
+The example contains no data and will not run until those paths are set. On a login node the GPU check may report that CUDA is unavailable; run the pipeline itself on a GPU node.
 
-Read the per-sample HTML reports, then use the [manual-review workflow](docs/outputs.md). Existing study configurations at `configs/*.yaml` are preserved as the research record and contain cluster-specific paths; the quick start does not use them.
+4. Inspect the per-sample HTML reports and, if needed, refilter by hand as described in [outputs](docs/outputs.md).
 
-## Commands and configuration
+The YAML files directly under `configs/` are the configurations used for our own studies. They contain cluster-specific paths and are not needed for a new dataset.
 
-`python -m sc --help` lists the convenience dispatcher. `python -m sc map ...` selects the mapping environment; it still requires the mapping-tool setup above. Direct `python -m <stage>.main` commands remain supported. `sc` does not schedule dependencies or automatically invalidate cached results.
+## The `sc` command
+
+`python -m sc` runs a stage in its own conda environment and reports what has been produced so far. It does not schedule stages or decide what needs rerunning.
 
 ```bash
+python -m sc --help
 python -m sc status -c configs/local/pipeline.yaml
 python -m sc test portable
 python -m sc test
 ```
 
-See [configuration and path rules](docs/configuration.md), [output contracts](docs/outputs.md), [testing](docs/testing.md), and [batch launchers](batch_scripts/README.md). Optional workflows have separate [integration](docs/setup-integration.md) and [annotation](docs/setup-annotation.md) guides. The [documentation index](docs/README.md) links the scientific rationale.
+`python -m sc map ...` still requires the mapping setup above. The stages can also be run directly with `python -m <stage>.main`.
 
-## Reuse and attribution
+## Documentation
 
-A license for the project's own code is **not yet selected**. This release preparation does not assign one. See the [third-party inventory](docs/third-party.md) for bundled ontology/patch origins and the remaining attribution checks before public release.
+- [Mapping setup](docs/setup-mapping.md), [configuration](docs/configuration.md) and [outputs](docs/outputs.md)
+- [Integration](docs/setup-integration.md) and [annotation](docs/setup-annotation.md)
+- [Testing](docs/testing.md) and [batch scripts](batch_scripts/README.md)
+- The [documentation index](docs/README.md), which also links the design notes in `docs/decisions/`
 
-For release preparation and preserving existing results, see [releasing](docs/releasing.md). Raw data, indices, results, private notes, and compiled tools are excluded from Git.
+## Licence and data
+
+A licence for this code has not yet been chosen. Bundled third-party material and its origin are listed in [docs/third-party.md](docs/third-party.md).
+
+Raw data, reference indices, results and compiled tools are not part of this repository.

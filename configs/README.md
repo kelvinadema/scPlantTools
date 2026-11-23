@@ -1,22 +1,17 @@
-# Configuration inventory
+# Configurations
 
-Start a new dataset from [examples/minimal/](examples/minimal/README.md), copied
-into ignored `configs/local/`. The full path/precedence rules are in
-[configuration](../docs/configuration.md).
+For a new dataset, copy [examples/minimal/](examples/minimal/README.md) to `configs/local/`, which Git ignores. The path and precedence rules are described in [configuration](../docs/configuration.md).
 
-| Location | Role |
+| Location | Contents |
 |---|---|
-| `examples/minimal/` | Complete editable mapping/QC example using existing scientific defaults |
-| `local/` | Your machine/input configuration; excluded from Git |
-| Top-level `*_config.yaml` | Preserved working study settings and profiles |
-| `sample_metadata*.yaml`, `MarcantiaSample.yaml` | Preserved study sample sheets |
-| `external/` | Public-study manifests and curated metadata; incomplete fetch files remain local |
-| `C14/` | Study-specific read-budget cohorts |
-| `chemistry_recheck_2026-09-21/` | Historical chemistry comparison configurations |
-| `markerid/` | Historical study input lists; verify their older output paths before reuse |
-| `schemas/` | Generated editor metadata from `shared/config_spec.py` |
+| `examples/minimal/` | Complete mapping and QC example with the default settings |
+| `local/` | Your own configuration (not tracked) |
+| `*_config.yaml` | Settings and QC profiles used in our studies |
+| `sample_metadata*.yaml`, `MarcantiaSample.yaml` | Sample sheets of our studies |
+| `external/` | Sample sheets and metadata for public datasets |
+| `C14/` | Read-depth subsampling cohorts from one study |
+| `chemistry_recheck_2026-09-21/` | Configurations from a re-check of library chemistries |
+| `markerid/` | Input lists from an earlier study; their result paths may be out of date |
+| `schemas/` | Editor schemas generated from `shared/config_spec.py` |
 
-Existing files were kept at their original paths and their values were not
-retuned. KB and STARsolo entries remain unimplemented placeholders. A file's
-presence here does not imply its external FASTQs/reference data are bundled or
-available; use preflight and the opt-in site diagnostics before a study rerun.
+The study files are kept as they were used and have not been re-tuned. The kb-python and STARsolo entries are placeholders and do not run. The FASTQ and reference files these configurations point to are not included; run the preflight check and `python -m sc test site` before rerunning a study.

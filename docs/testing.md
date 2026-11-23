@@ -1,29 +1,29 @@
 # Testing
 
-Suites are separated by environment because stage dependencies differ. Run from the checkout root. Portable tests need Python 3.12, pytest, and PyYAML; they must not require the developer's live results or installed stage environments.
+The tests are split by conda environment, because the stages cannot be imported into one interpreter. Run them from the repository root. The portable tests need only Python 3.12, pytest and PyYAML, and do not depend on local data or the stage environments.
 
 ```bash
 python -m pytest tests/portable -q
-python -m sc test                 # required portable + stage suites
-python -m sc test --fast          # explicitly excludes slow end-to-end suite
-python -m sc test mapping         # one declared environment
-python -m sc test site            # opt-in diagnostics of the local study setup
+python -m sc test                 # portable and all stage suites
+python -m sc test --fast          # without the slow end-to-end suite
+python -m sc test mapping         # one suite
+python -m sc test site            # checks of the local installation and study data
 ```
 
-| Suite | Environment | Scope |
+| Suite | Environment | Covers |
 |---|---|---|
-| portable | active interpreter | Config resolution, package layering, launch/setup controls, release consistency |
-| mapping | scMappingV3.12 | Existing QC and artifact contracts |
-| integration | scIntegrationV1.12 | Existing target/model/config and derived-layer behavior |
-| annotation | scAnnotationV3.12 | Existing ontology/proteome behavior |
-| markerid | scMarkersV3.12 | Existing marker-method and label interfaces |
-| e2e | scMappingV3.12 | Synthetic FASTQ → count matrix with real simpleaf/piscem/alevin-fry |
-| site | active interpreter | Installed environments, study cohort-sheet availability, live output-layout checks |
+| portable | any | Configuration resolution, package layering, launcher and setup checks, release consistency |
+| mapping | scMappingV3.12 | QC filters and output contracts |
+| integration | scIntegrationV1.12 | Targets, model configuration and derived layers |
+| annotation | scAnnotationV3.12 | Ontology traversal and proteome preparation |
+| markerid | scMarkersV3.12 | Marker methods and label input |
+| e2e | scMappingV3.12 | Synthetic FASTQ to count matrix with the real simpleaf, piscem and alevin-fry |
+| site | any | Installed environments, availability of study sample sheets, layout of existing results |
 
-Site diagnostics retain the original checks and may fail for unfinished fetches or historical output layouts. They are not hidden by the portable release result. Investigate failures without deleting data or changing scientific defaults.
+The site suite checks our own installation and may fail for downloads that have not finished or for older result layouts. It is not part of the default run.
 
-The synthetic smoke uses a deterministic generated permit list and data in a temporary directory. Its assertions still check which genes and cells receive counts. Missing tools fail the explicitly selected end-to-end suite; all seven tests must run for a release. It does not train CellBender/SOLO or verify all chemistries.
+The end-to-end test generates a whitelist and reads in a temporary directory and checks which genes and cells receive counts. It fails, rather than skips, when the mapping tools are missing. It does not run CellBender or SOLO and does not cover every chemistry.
 
-The dispatcher fails on missing required suites and pytest's no-tests-collected status. `--fast` reports its deliberate end-to-end exclusion. Test results alone are not proof of numerical equivalence after a scientific-code change; the release procedure also protects existing source/configuration bytes.
+`sc test` fails when a suite is missing or collects no tests. Passing tests do not show that a change to analysis code leaves results unchanged; compare outputs for that.
 
-The portable CI workflow uses GitHub's [checkout](https://github.com/actions/checkout) and [setup-python](https://github.com/actions/setup-python) actions with Python 3.12. CI setup does not install or upgrade the scientific stage environments.
+The GitHub Actions workflow runs the portable suite and `tools/check_release.py` with Python 3.12. It does not install the stage environments.

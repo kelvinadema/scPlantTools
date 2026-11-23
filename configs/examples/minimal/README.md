@@ -1,25 +1,25 @@
-# Minimal mapping/QC configuration
+# Minimal mapping and QC configuration
 
-This example contains paired cell/nucleus entries using the same existing 10x v3 and default QC/filter settings. Input data is not bundled. The scientific values are copied from the working default profile; organelle identifiers are Medicago-specific and require deliberate adaptation for another species.
+This example defines one cell and one nucleus sample, both 10x v3, with the default QC metrics and filters. No data are included. The QC settings are the defaults used in our own runs; the organelle gene identifiers are specific to Medicago and must be changed for other species.
 
-From the checkout root:
+From the repository root:
 
 ```bash
 mkdir -p configs/local
 cp -n configs/examples/minimal/*.yaml configs/local/
 ```
 
-`cp -n` leaves existing local files intact. Edit the copied files:
+`cp -n` does not overwrite files that already exist. Then edit the copies:
 
-- `samples.yaml`: sample names, preparation, batches, paired FASTQ paths.
-- `indexes.yaml`: matching reference FASTA/GTF and the index destination.
-- `technologies.yaml`: whitelist location; change chemistry only to match your library.
-- `qc.yaml`: the same annotation's path and species-specific feature definitions.
-- `pipeline.yaml`: output location and environment prefixes, or leave prefixes null and set `CELLBENDER_ENV`/`DOUBLET_ENV`.
-- `filter.yaml`: inspect the existing thresholds/modes before deciding whether they suit your data.
+- `samples.yaml`: sample names, preparation type, batches and paired FASTQ paths.
+- `indexes.yaml`: the reference FASTA and GTF and where to build the index.
+- `technologies.yaml`: the whitelist location. Change the chemistry only if your libraries use a different one.
+- `qc.yaml`: the path to the same annotation and the organelle gene definitions for your species.
+- `pipeline.yaml`: the output directory and the conda environment prefixes. The prefixes can be left empty if `CELLBENDER_ENV` and `DOUBLET_ENV` are set.
+- `filter.yaml`: the QC thresholds and modes. Check whether they suit your data.
 
-Paths in `pipeline.yaml` deliberately point to `configs/local/`. Commands run from the repository root; these YAML files do not perform general shell-variable expansion. Both samples share a reference in this example; remove either sample if it is not part of your experiment.
+The paths in `pipeline.yaml` point to `configs/local/`, and commands are run from the repository root. The YAML files do not expand shell variables. Both samples share one reference; remove the one you do not need.
 
-Follow [mapping setup](../../../docs/setup-mapping.md). No active study YAML needs editing. The example defaults preserve GPU use and per-sample tuning, so they retain the existing resource requirements. Tests verify equality of the copied numerical settings against the working defaults, allowing only the listed input/site substitutions.
+Then follow [mapping setup](../../../docs/setup-mapping.md). The example uses a GPU and per-sample model tuning, so it needs the same resources as our own runs. A test checks that the numerical settings here match the defaults in the study configuration.
 
-For editor schema hints after copying, change `../../schemas/` to `../schemas/` in the copied YAML modelines. This affects editor hints only.
+For editor schema hints in the copied files, change `../../schemas/` to `../schemas/` in their first line.

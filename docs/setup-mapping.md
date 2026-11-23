@@ -1,10 +1,10 @@
 # Mapping and QC setup
 
-Run commands from the logical execution root containing `.root`, `mapping/`, and `configs/`. On the development cluster this is the nobackup tree; source files link to the backup checkout. A normal clone needs no such symlinks. `SCRNASEQ_ROOT`, when set, must identify the intended execution root.
+All commands are run from the repository root, the directory that contains `.root`, `mapping/` and `configs/`. If you run from elsewhere, set `SCRNASEQ_ROOT` to that directory. On our cluster the source and the data are kept on different file systems and joined with symbolic links; a normal clone needs no such links.
 
-## Environments and tool patches
+## Environments and patches
 
-Use the existing manifests; do not update versions while reproducing an existing analysis:
+Create the environments from the version-pinned files in `envs/`. When reproducing an earlier analysis, do not update the package versions.
 
 ```bash
 conda env create -f envs/scMappingV3.12.yml
@@ -12,7 +12,7 @@ conda env create -f envs/cellBenderENV.yml
 conda env create -f envs/scIntegrationV1.12.yml
 ```
 
-Follow [envs/README.md](../envs/README.md) for the CellBender checkpoint patch and patched piscem build. Stock and patched piscem share a version string; BD requires the geometry check, not just `--version`. Preserve the patch versions used by an existing run.
+Two of these need an extra step, described in [envs/README.md](../envs/README.md): CellBender must be patched, and BD Rhapsody data need a patched piscem build. The stock and patched piscem report the same version, so check the barcode geometry rather than `--version`.
 
 ```bash
 bash tools/piscem-bd/build.sh
@@ -23,13 +23,13 @@ source batch_scripts/lib/mapping_setup.sh
 sc_mapping_setup
 ```
 
-The exports are fallbacks when the corresponding YAML `env` values are unset. An explicit YAML prefix takes precedence in the pipeline. The example leaves these values unset; existing study configs retain their prefixes.
+CellBender and the SOLO doublet model run in their own environments. Their locations are taken from `cellbender.env` and `doublets.env` in the pipeline configuration; the two environment variables are only used when those keys are empty.
 
-The shared shell helper preserves the launcher's existing behavior: prefer `tools/bin`, initialize simpleaf's tool cache in `af_home`, disable HDF5 file locking, and request the existing file-handle limit. Use node-local `TMPDIR` for index construction. Set thread allocation consistently with your scheduler; this setup does not change analysis hyperparameters.
+`sc_mapping_setup` puts `tools/bin` first on the `PATH` (so the patched piscem is used), initialises simpleaf's tool cache in `af_home`, disables HDF5 file locking and sets the open-file limit to 2048. Build indices with `TMPDIR` on node-local storage, and set the number of threads to match your scheduler allocation.
 
-## Configure, preflight, and run
+## Configure, check and run
 
-Copy and edit the [minimal example](../configs/examples/minimal/README.md). It is a standalone config with no cohort indirection, so mapping, status, and manual refilter all use the same sheet and output root.
+Copy and edit the [minimal example](../configs/examples/minimal/README.md). It is a single self-contained configuration, so mapping, `sc status` and manual refiltering all use the same sample sheet and output directory.
 
 ```bash
 python -m shared.mapping_setup -c configs/local/pipeline.yaml
@@ -37,21 +37,21 @@ python -m mapping.validate -c configs/local/pipeline.yaml
 python -m mapping.main -c configs/local/pipeline.yaml --build-indexes
 ```
 
-The first check verifies BD geometry using the executable actually cached by simpleaf, when the resolved sheet includes BD samples. The second validates the configuration and execution prerequisites. Missing CUDA is expected on a login node when GPU execution is configured; do not alter scientific settings merely to make that check pass there.
+The first command checks the BD Rhapsody barcode geometry of the piscem that simpleaf will actually use, if the sample sheet contains BD samples. The second validates the configuration and checks that inputs, environments and indices are in place. On a login node it will report CUDA as unavailable when GPU use is configured; this is expected and does not need a configuration change.
 
-On SLURM, review the resource directives and run from the checkout root:
+On SLURM, check the resource directives in the launcher and submit from the repository root:
 
 ```bash
 mkdir -p logs
 sbatch batch_scripts/run_mapper.sh --config configs/local/pipeline.yaml
 ```
 
-The launcher selects the same `--config` and `--cohort` for its setup checks and execution. The legacy invocation and resource directives remain available. `python -m sc map ...` activates the stage environment but does not replace the setup helper.
+The launcher runs `sc_mapping_setup` and the BD geometry check with the same `--config` and `--cohort` it passes to mapping; `mapping.main` then runs its own preflight validation. `python -m sc map ...` selects the mapping environment but does not replace `sc_mapping_setup`.
 
-## Reruns and supported backends
+## Reruns
 
-Existing `.done` flags control reuse. Changing a YAML value does not automatically invalidate every dependent artifact. Force flags include `--force-mapping`, `--force-preprocessing`, `--force-qc`, `--force-plotting`, `--force-mapextraction`, `--force-report`, `--force-doublets`, and `--force-index-rebuild NAME`. Use them only when intentionally recomputing that step and its dependents.
+Each completed step writes a `.done` flag and is skipped on the next run. Changing a configuration value does not invalidate earlier steps. To recompute a step and the steps after it, use one of `--force-mapping`, `--force-preprocessing`, `--force-qc`, `--force-plotting`, `--force-mapextraction`, `--force-report`, `--force-doublets` or `--force-index-rebuild NAME`.
 
-Only `alevin` is implemented end-to-end. KB and STARsolo placeholders remain in source/configs and are deliberately rejected. No mapper functionality or QC method was added by the release cleanup.
+Only the `alevin` mapper (simpleaf, piscem and alevin-fry) is implemented. kb-python and STARsolo appear in the configuration but are rejected before mapping starts.
 
-See [outputs](outputs.md) for review/refiltering and [configuration](configuration.md) for profile selection. Existing tuning and small-sample safeguards are unchanged; profile values are scientific choices, not installation settings.
+See [outputs](outputs.md) for reviewing and refiltering samples and [configuration](configuration.md) for choosing QC profiles. QC thresholds are analysis choices and should be set for the data at hand, not adjusted to get through installation checks.
